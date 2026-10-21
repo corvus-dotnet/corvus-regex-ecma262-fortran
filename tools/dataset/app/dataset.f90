@@ -5,16 +5,20 @@
 !   fpm run --profile release -- <data directory> <wrong-cases file> [--files <name>]     (from tools/dataset)
 !
 ! Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
-! answers), the record's flags alone (the legacy answers) and, in the file that has them, the flags with v added (the
-! unicode_sets answers). A text is matched as UTF-16 (positions in code units, as the data gives them) and as UTF-8
-! (positions in bytes); a text with a lone surrogate has no UTF-8 form and is matched as UTF-16 alone. Records marked
-! v8_deviation are left out. Any difference from V8 is a wrong answer; a refusal of a valid pattern, an acceptance of an
-! invalid one, and a match that reaches its limit are counted apart and listed too. captures.jsonl is judged on exec,
-! the global search, the sticky flag, replace and split. A match is given 2 seconds.
+! answers), the record's flags alone (the legacy answers) and, in the records that have them, the flags with v added
+! (the unicode_sets answers). A text is matched as UTF-16 (positions in code units, as the data gives them) and as UTF-8
+! (positions in bytes); a text with a lone surrogate has no UTF-8 form and is matched as UTF-16 alone. Records and tests
+! marked v8_deviation are left out, but for those marked unicode-version, where V8 has the Unicode of 16 and test262
+! that of 17: the C library has Unicode 17, so they are judged by test262's verdicts (test262_valid) and answers
+! (test262_answer) in the grammars those name, and left out in the others. Any difference from V8 is a wrong answer; a
+! refusal of a valid pattern, an acceptance of an invalid one, and a match that reaches its limit are counted apart and
+! listed too. captures.jsonl is judged on exec, the global search, the sticky flag, replace and split. A match is given
+! 2 seconds.
 !
-! The records are read by tools/jsonlite, which decodes a lone surrogate as a code point of Plane 15's private use area
-! (U+F0000 + its offset from U+D800) and a NUL as U+F0800; each is turned back into its code unit (or byte) wherever the
-! text is used, and a lone surrogate in a pattern is read as U+FFFD, as the C library's runner reads it.
+! The records are read by tools/jsonlite, which decodes a lone surrogate as a number past the last code point of
+! Unicode (0x110000 + its offset from U+D800) and a NUL as 0x110800, so that none is taken for a character of the text
+! (test262 has U+F0000 among its texts); each is turned back into its code unit (or byte) wherever the text is used,
+! and a lone surrogate in a pattern is read as U+FFFD, as the C library's runner reads it.
 program dataset
   use, intrinsic :: iso_fortran_env, only: int16, int64, real64, error_unit, output_unit
   use jsonlite, only: node_t, parse, member, item, size_of, json_null, json_array, json_object, json_logical, &
@@ -67,9 +71,10 @@ contains
       r0 = right; w0 = wrong; f0 = refused; a0 = accepted; l0 = limited
       call judge_file(data // "/" // name, name)
       call system_clock(t1)
-      write (output_unit, "(a24, ' right ', i10, '  wrong ', i6, '  refused-valid ', i4, '  accepted-invalid ', i4, " // &
-             "'  limit ', i4, '  ', f6.1, 's')") name, right - r0, wrong - w0, refused - f0, accepted - a0, &
-             limited - l0, real(t1 - t0) / real(rate)
+      ! The name in 24 columns, on the left, as the Rust runner writes it, and in full when it is longer.
+      write (output_unit, "(a, ' right ', i10, '  wrong ', i6, '  refused-valid ', i4, '  accepted-invalid ', i4, " // &
+             "'  limit ', i4, '  ', f6.1, 's')") name // repeat(" ", max(0, 24 - len(name))), right - r0, wrong - w0, &
+             refused - f0, accepted - a0, limited - l0, real(t1 - t0) / real(rate)
       flush (output_unit)
     end do
     call sort_lines(wrongs(1:nwrong))
@@ -137,7 +142,7 @@ contains
       write (error_unit, "(a)") "a line of " // name // " is not JSON"
       error stop 2
     end if
-    if (flag_of(r, "v8_deviation")) then
+    if (skipped_record(r)) then
       skipped = skipped + 1
       return
     end if
@@ -151,6 +156,20 @@ contains
       call judge_tests(r, p%s, name)
     end if
   end subroutine judge_line
+
+  ! Whether a deviation is judged by test262's answers: one of the Unicode version, by the C library, which has the
+  ! Unicode of test262.
+  logical function by_test262(marked)
+    type(node_t), intent(in), target :: marked
+    logical :: found
+    by_test262 = text_of(marked, "deviation", found) == "unicode-version"
+  end function by_test262
+
+  ! Whether a record is left out: one marked v8_deviation that is not judged by test262's answers.
+  logical function skipped_record(r)
+    type(node_t), intent(in), target :: r
+    skipped_record = flag_of(r, "v8_deviation") .and. .not. by_test262(r)
+  end function skipped_record
 
   logical function flag_of(n, path)
     type(node_t), intent(in), target :: n
@@ -213,11 +232,11 @@ contains
     is_lone = cp >= lone_first .and. cp <= lone_last
   end function is_lone
 
-  ! Whether a text holds a lone surrogate (Plane 15's code points all start with the byte F3).
+  ! Whether a text holds a lone surrogate (written as UTF-8 writes 0x110000 and on, from the byte F4).
   logical function lone(s)
     character(*), intent(in) :: s
     lone = .false.
-    if (index(s, achar(243)) == 0) return
+    if (index(s, achar(244)) == 0) return
     lone = any(is_lone(code_points(s)))
   end function lone
 
@@ -281,7 +300,7 @@ contains
     character(:), allocatable :: out
     integer, allocatable :: cps(:)
     integer :: i
-    if (index(s, achar(243)) == 0) then
+    if (index(s, achar(244)) == 0) then
       out = s
       return
     end if
@@ -406,18 +425,27 @@ contains
     character(:), allocatable :: flags, head, mode_flags, message
     character(12) :: answers(3)
     character(1) :: suffixes(3)
-    type(node_t), pointer :: tests, test, answer, text
+    type(node_t), pointer :: tests, test, answer, text, verdict
     type(regex_t) :: re
-    logical :: found, valid
+    logical :: found, valid, record_by_test262, marked
     integer :: m, nmodes, i, stat
     flags = text_of(r, "flags", found)
     suffixes = ["u", " ", "v"]
     answers = [character(12) :: "unicode", "legacy", "unicode_sets"]
     nmodes = merge(3, 2, associated(member(r, "valid.unicode_sets")))
     tests => member(r, "tests")
+    ! A record marked for the Unicode version is judged in the grammars test262 gives a verdict for, by it.
+    record_by_test262 = flag_of(r, "v8_deviation") .and. by_test262(r)
     do m = 1, nmodes
       mode_flags = flags // trim(suffixes(m))
-      valid = flag_of(r, "valid." // trim(answers(m)))
+      if (record_by_test262) then
+        verdict => member(r, "test262_valid." // trim(answers(m)))
+        if (.not. associated(verdict)) cycle
+        if (verdict%kind /= json_logical) cycle
+        valid = verdict%b
+      else
+        valid = flag_of(r, "valid." // trim(answers(m)))
+      end if
       head = name // achar(9) // "/" // shown(pattern) // "/" // mode_flags
       call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message)
       if (stat /= CRE_OK) then
@@ -436,7 +464,15 @@ contains
       if (.not. associated(tests)) cycle
       do i = 1, size_of(tests)
         test => item(tests, i)
-        answer => member(test, trim(answers(m)))
+        ! A test marked for the Unicode version, or any test of a record so marked, is judged by test262's answer in
+        ! this grammar, and left out where it has none. A test marked otherwise is left out.
+        marked = flag_of(test, "v8_deviation")
+        if (marked .and. .not. by_test262(test)) cycle
+        if (marked .or. record_by_test262) then
+          answer => member(test, "test262_answer." // trim(answers(m)))
+        else
+          answer => member(test, trim(answers(m)))
+        end if
         text => member(test, "text")
         if (.not. associated(answer) .or. .not. associated(text)) cycle
         if (answer%kind /= json_logical .or. text%kind /= json_string) cycle
