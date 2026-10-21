@@ -1,11 +1,20 @@
 ! The binding's API against the answers V8 gives: compiling, testing, finding, captures by number and by name, the
 ! global search, counting, replacing and splitting, over UTF-8 and UTF-16, the half characters of a match without u
-! or v, and the failures reported through stat.
+! or v, and the failures reported through stat; and classes nested as deep as allowed, on a small stack.
 program api_test
   use, intrinsic :: iso_fortran_env, only: int16, int64, real64, error_unit
   use corvus_regex_ecma262
   implicit none
   integer :: failures = 0
+  character(16) :: role
+
+  ! The test run again as a child process, on a small stack (see deep_classes).
+  call get_command_argument(1, role)
+  if (role == "deep-classes") then
+    call deep_classes_here()
+    if (failures > 0) error stop 1
+    stop
+  end if
 
   call compiling()
   call testing()
@@ -19,6 +28,7 @@ program api_test
   call limits()
   call copying()
   call readme()
+  call deep_classes()
 
   if (failures > 0) then
     write (error_unit, "(i0, a)") failures, " checks failed"
@@ -253,4 +263,39 @@ contains
     call separator%split("a ; b;c", pieces)
     call check(size(pieces) == 5 .and. pieces(3)%value == "b", "readme split")
   end subroutine readme
+
+  ! With v, a class may hold a class, and the core reads each level of nesting by recursion: a pattern nested as deep
+  ! as allowed must be read on the core's own deep stack, not the caller's, so that it compiles on a small stack (a host
+  ! language's thread, or a main thread under a small ulimit -s), and one nested deeper must be refused, not overflow
+  ! the stack and abort the process. Fortran makes no threads of its own, so this runs the test again as a child
+  ! process whose main thread has a 256 KB stack; a crash there is its exit status. Where there is no ulimit
+  ! (Windows), it runs here, on the main thread's stack. It needs the C library 0.1.2 or later (0.1.1 counted only
+  ! groups when choosing the stack, and the child crashes).
+  subroutine deep_classes()
+    character(:), allocatable :: self
+    character(16) :: os
+    integer :: n, exitstat, cmdstat
+    call get_environment_variable("OS", os)
+    if (os == "Windows_NT") then
+      call deep_classes_here()
+      return
+    end if
+    call get_command_argument(0, length=n)
+    allocate (character(n) :: self)
+    call get_command_argument(0, self)
+    exitstat = -1
+    call execute_command_line("ulimit -s 256 && exec '" // self // "' deep-classes", exitstat=exitstat, &
+                              cmdstat=cmdstat)
+    call check(cmdstat == 0 .and. exitstat == 0, "nested classes on a 256 KB stack (the child process failed)")
+  end subroutine deep_classes
+
+  subroutine deep_classes_here()
+    type(regex_t) :: re
+    integer :: stat
+    call re%compile(repeat("[", 1000) // "a" // repeat("]", 1000), "v", stat=stat)
+    call check(stat == CRE_OK, "classes nested 1000 deep compile")
+    if (stat == CRE_OK) call check(re%test("a") .and. .not. re%test("b"), "classes nested 1000 deep match")
+    call re%compile(repeat("[", 200000), "v", stat=stat)
+    call check(stat == CRE_PATTERN_TOO_LARGE .and. .not. re%is_compiled(), "classes nested 200000 deep are too large")
+  end subroutine deep_classes_here
 end program api_test
