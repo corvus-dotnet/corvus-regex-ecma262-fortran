@@ -1,0 +1,21 @@
+# The Industry benchmark harness for this binding (see app/industry.f90).
+name = "industry"
+version = "0.1.1"
+
+[build]
+link = ["corvus_regex_ecma262"]
+auto-executables = false
+
+[fortran]
+implicit-typing = false
+implicit-external = false
+
+[dependencies]
+corvus-regex-ecma262 = { path = "../.." }
+jsonlite = { path = "../jsonlite" }
+fortran-regex = { git = "https://github.com/perazz/fortran-regex", tag = "1.1.2" }
+
+[[executable]]
+name = "industry"
+source-dir = "app"
+main = "industry.f90"

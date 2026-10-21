@@ -1,0 +1,25 @@
+name = "corvus-regex-ecma262"
+version = "0.1.1"
+license = "Apache-2.0"
+author = "endjin limited"
+maintainer = "corvus-dotnet"
+copyright = "Copyright (c) endjin limited"
+description = "ECMA-262 (JavaScript) regular expressions for Fortran: a binding to the corvus-regex-ecma262 C library"
+homepage = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran"
+keywords = ["regex", "regular-expressions", "ecmascript", "javascript", "unicode"]
+
+[build]
+# The corvus-regex-ecma262 C library (a release of corvus-regex-ecma262-rs, 0.1.1 or later): its lib directory on the
+# linker's path, or LDFLAGS="-L<lib>".
+link = ["corvus_regex_ecma262"]
+auto-executables = false
+auto-examples = true
+auto-tests = true
+
+[fortran]
+implicit-typing = false
+implicit-external = false
+source-form = "free"
+
+[library]
+source-dir = "src"

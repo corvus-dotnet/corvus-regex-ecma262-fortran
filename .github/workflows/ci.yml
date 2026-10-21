@@ -1,0 +1,232 @@
+# The binding, built and tested with fpm against the C library's release archive (as a user's build finds it), with
+# gfortran (the oldest version supported, 11, and a recent one) on Linux and macOS, and with Intel ifx on Linux and
+# Windows; built, tested and installed with CMake, and used by a consumer of the installed package; and the ECMA-262
+# test data through the binding on Linux. The data is pinned to a commit; the pass is 0 wrong answers, 0 refusals of a
+# valid pattern, 0 acceptances of an invalid one and 0 matches at their limit, over UTF-8 and UTF-16.
+name: ci
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CRE_VERSION: 0.1.1
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.compiler }} ${{ matrix.version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          compiler: gcc
+          version: '11'
+          flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
+          # gfortran 11 warns falsely that deferred-length character variables of the tests may be used uninitialized;
+          # the library itself builds with every warning an error (the Build step).
+          test-flags: -Wno-maybe-uninitialized
+        - os: ubuntu-latest
+          compiler: gcc
+          version: '14'
+          flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
+        - os: macos-latest
+          compiler: gcc
+          version: '14'
+          flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
+        - os: ubuntu-latest
+          compiler: intel
+          version: '2025.3'
+          flags: -warn all -stand f18 -check all -g
+        - os: windows-latest
+          compiler: intel
+          version: '2025.3'
+          flags: /warn:all /stand:f18 /check:all
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - name: Fortran compiler
+      id: fortran
+      uses: fortran-lang/setup-fortran@be037f0a45b1160f139d4ccd0b96f9e9bfd6a682 # v1.10.0
+      with:
+        compiler: ${{ matrix.compiler }}
+        version: ${{ matrix.version }}
+    - name: fpm
+      uses: fortran-lang/setup-fpm@a03b5f81f16417c937a31b745eeb866c5a26a7a0 # v10
+      with:
+        github-token: ${{ github.token }}
+        fpm-version: v0.13.0
+    - name: The C library
+      # The release archive for the platform, unpacked under $RUNNER_TEMP, and made findable as a user of the binding
+      # makes it: the linker's path, the loader's path and CMake.
+      env:
+        GH_TOKEN: ${{ github.token }}
+        FC: ${{ steps.fortran.outputs.fc }}
+      run: |
+        case "$RUNNER_OS" in
+          Linux) target=x86_64-unknown-linux-gnu; asset="corvus-regex-ecma262-$CRE_VERSION-$target.tar.gz" ;;
+          macOS) target=aarch64-apple-darwin; asset="corvus-regex-ecma262-$CRE_VERSION-$target.tar.gz" ;;
+          Windows) target=x86_64-pc-windows-msvc; asset="corvus-regex-ecma262-$CRE_VERSION-$target.zip" ;;
+        esac
+        gh release download "v$CRE_VERSION" -R corvus-dotnet/corvus-regex-ecma262-rs -p "$asset" -D "$RUNNER_TEMP"
+        mkdir -p "$RUNNER_TEMP/cre-unpacked"
+        case "$asset" in
+          *.zip) unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/cre-unpacked" ;;
+          *) tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/cre-unpacked" ;;
+        esac
+        prefix="$RUNNER_TEMP/cre-unpacked/corvus-regex-ecma262-$CRE_VERSION-$target"
+        echo "CMAKE_PREFIX_PATH=$prefix" >> "$GITHUB_ENV"
+        case "$RUNNER_OS" in
+          Linux)
+            {
+              echo "LIBRARY_PATH=$prefix/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+              echo "LD_LIBRARY_PATH=$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            } >> "$GITHUB_ENV" ;;
+          macOS)
+            # DYLD_FALLBACK_LIBRARY_PATH, not DYLD_LIBRARY_PATH, so that it only fills in what a binary cannot find:
+            # the C library for the tests, and libgfortran for the fpm binary, which is linked against another
+            # Homebrew gcc's.
+            gfortran_lib=$(dirname "$("$FC" -print-file-name=libgfortran.5.dylib)")
+            {
+              echo "LIBRARY_PATH=$prefix/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+              echo "DYLD_FALLBACK_LIBRARY_PATH=$prefix/lib:$gfortran_lib:/usr/local/lib:/usr/lib"
+            } >> "$GITHUB_ENV" ;;
+          Windows)
+            # ifx links the static library, built for the dynamic C runtime, with the system libraries it needs; the
+            # tests run with the DLL on the path for the CMake build, which links the shared library.
+            winprefix=$(cygpath -w "$prefix")
+            printf 'LIB=%s\\lib;%s\n' "$winprefix" "${LIB:-}" >> "$GITHUB_ENV"
+            printf '%s\\bin\n' "$winprefix" >> "$GITHUB_PATH" ;;
+        esac
+    - name: MSVC's linker, not Git Bash's link
+      # In a bash step on Windows, coreutils' link comes before MSVC's link.exe on the path, and ifx calls link to link.
+      # setup-fortran moves /usr/bin/link to $RUNNER_TEMP, which setup-fpm then puts on the path (fpm is installed
+      # there), so it is moved out of the way in both places.
+      if: runner.os == 'Windows'
+      run: |
+        for coreutils in /usr/bin/link "$RUNNER_TEMP/link"; do
+          if [ -e "$coreutils" ]; then mv "$coreutils" "$coreutils.coreutils"; fi
+        done
+        found=$(command -v link || true)
+        echo "link: $found"
+        case "$found" in
+          *[Mm]icrosoft*|*MSVC*) ;;
+          *) echo "::error::link is not MSVC's link.exe: $found"; exit 1 ;;
+        esac
+    - name: Check the version is the same everywhere
+      run: |
+        version=$(sed -n 's/^version = "\(.*\)"$/\1/p' fpm.toml | head -n 1)
+        grep -q "binding_version = \"$version\"" src/corvus_regex_ecma262.f90 \
+          || { echo "::error::src/corvus_regex_ecma262.f90 does not say binding_version $version."; exit 1; }
+        grep -q "^project(corvus_regex_ecma262_fortran VERSION $version " CMakeLists.txt \
+          || { echo "::error::CMakeLists.txt does not say VERSION $version."; exit 1; }
+        grep -q "binding_version == \"$version\"" test/api_test.f90 \
+          || { echo "::error::test/api_test.f90 does not check binding_version $version."; exit 1; }
+    - name: Build (fpm)
+      # The library, with every warning an error. On Windows the static library also needs the system libraries it
+      # uses.
+      env:
+        FPM_FC: ${{ steps.fortran.outputs.fc }}
+        FPM_CC: ${{ steps.fortran.outputs.cc }}
+        FLAGS: ${{ matrix.flags }}
+      run: |
+        link=()
+        if [ "$RUNNER_OS" = Windows ]; then
+          link=(--link-flag "kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib")
+        fi
+        fpm build --flag "$FLAGS" "${link[@]}"
+    - name: Test (fpm)
+      env:
+        FPM_FC: ${{ steps.fortran.outputs.fc }}
+        FPM_CC: ${{ steps.fortran.outputs.cc }}
+        FLAGS: ${{ matrix.flags }} ${{ matrix.test-flags }}
+      run: |
+        set -o pipefail
+        link=()
+        if [ "$RUNNER_OS" = Windows ]; then
+          link=(--link-flag "kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib")
+        fi
+        fpm test --flag "$FLAGS" "${link[@]}" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+        grep -q "all API checks passed" "$RUNNER_TEMP/tests.log" || { echo "::error::The API test did not pass."; exit 1; }
+        fpm run --example basic --flag "$FLAGS" "${link[@]}" 2>/dev/null | grep -v "^\[" | tr -d '\r' > "$RUNNER_TEMP/example.txt"
+        diff --strip-trailing-cr example/expected.txt "$RUNNER_TEMP/example.txt"
+    - name: Build, test and install (CMake), and a consumer of the installed package
+      if: runner.os != 'Windows'
+      env:
+        FC: ${{ steps.fortran.outputs.fc }}
+      run: |
+        cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-cmake -j 4
+        ctest --test-dir build-cmake --output-on-failure
+        cmake --install build-cmake --prefix "$RUNNER_TEMP/prefix"
+        mkdir -p "$RUNNER_TEMP/consumer"
+        cp example/basic.f90 "$RUNNER_TEMP/consumer/"
+        cat > "$RUNNER_TEMP/consumer/CMakeLists.txt" <<'CMAKE'
+        cmake_minimum_required(VERSION 3.16)
+        project(consumer LANGUAGES Fortran)
+        find_package(corvus_regex_ecma262_fortran REQUIRED)
+        add_executable(basic basic.f90)
+        target_link_libraries(basic PRIVATE corvus_regex_ecma262::fortran)
+        CMAKE
+        cmake -S "$RUNNER_TEMP/consumer" -B build-consumer -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/prefix;$CMAKE_PREFIX_PATH"
+        cmake --build build-consumer
+        build-consumer/basic > "$RUNNER_TEMP/consumer.txt"
+        diff example/expected.txt "$RUNNER_TEMP/consumer.txt"
+
+  dataset:
+    name: The ECMA-262 test data
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        repository: corvus-dotnet/ecma262-regex-test-data
+        ref: 41ed6db477c0d57192673a3a1a76a3b7a194603b
+        path: ecma262-regex-test-data
+        persist-credentials: false
+    - name: Fortran compiler
+      uses: fortran-lang/setup-fortran@be037f0a45b1160f139d4ccd0b96f9e9bfd6a682 # v1.10.0
+      with:
+        compiler: gcc
+        version: '14'
+    - name: fpm
+      uses: fortran-lang/setup-fpm@a03b5f81f16417c937a31b745eeb866c5a26a7a0 # v10
+      with:
+        github-token: ${{ github.token }}
+        fpm-version: v0.13.0
+    - name: The C library
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        asset="corvus-regex-ecma262-$CRE_VERSION-x86_64-unknown-linux-gnu.tar.gz"
+        gh release download "v$CRE_VERSION" -R corvus-dotnet/corvus-regex-ecma262-rs -p "$asset" -D "$RUNNER_TEMP"
+        tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP"
+        prefix="$RUNNER_TEMP/corvus-regex-ecma262-$CRE_VERSION-x86_64-unknown-linux-gnu"
+        { echo "LIBRARY_PATH=$prefix/lib"; echo "LD_LIBRARY_PATH=$prefix/lib"; } >> "$GITHUB_ENV"
+    - name: Run the ECMA-262 test data
+      working-directory: tools/dataset
+      run: fpm run --profile release -- "$GITHUB_WORKSPACE/ecma262-regex-test-data/data" "$GITHUB_WORKSPACE/wrong-cases.tsv"
+    - name: Keep the wrong cases
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: wrong-cases
+        path: wrong-cases.tsv

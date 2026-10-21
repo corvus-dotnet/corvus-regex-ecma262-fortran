@@ -1,0 +1,4 @@
+build
+**/build
+.git
+tools/dataset/wrong.tsv

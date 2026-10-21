@@ -1,0 +1,256 @@
+! The binding's API against the answers V8 gives: compiling, testing, finding, captures by number and by name, the
+! global search, counting, replacing and splitting, over UTF-8 and UTF-16, the half characters of a match without u
+! or v, and the failures reported through stat.
+program api_test
+  use, intrinsic :: iso_fortran_env, only: int16, int64, real64, error_unit
+  use corvus_regex_ecma262
+  implicit none
+  integer :: failures = 0
+
+  call compiling()
+  call testing()
+  call finding()
+  call capturing()
+  call searching()
+  call replacing()
+  call splitting()
+  call utf16()
+  call half_characters()
+  call limits()
+  call copying()
+  call readme()
+
+  if (failures > 0) then
+    write (error_unit, "(i0, a)") failures, " checks failed"
+    error stop 1
+  end if
+  print "(a)", "all API checks passed"
+
+contains
+
+  subroutine check(ok, what)
+    logical, intent(in) :: ok
+    character(*), intent(in) :: what
+    if (.not. ok) then
+      failures = failures + 1
+      write (error_unit, "(a)") "FAILED: " // what
+    end if
+  end subroutine check
+
+  ! The UTF-16 code units of ASCII text.
+  function u16(s) result(units)
+    character(*), intent(in) :: s
+    integer(int16), allocatable :: units(:)
+    integer :: i
+    allocate (units(len(s)))
+    do i = 1, len(s)
+      units(i) = int(iachar(s(i:i)), int16)
+    end do
+  end function u16
+
+  subroutine compiling()
+    type(regex_t) :: re
+    integer :: stat
+    character(:), allocatable :: msg
+    call check(.not. re%is_compiled(), "not compiled at first")
+    call re%compile("(?<year>\d{4})-(?<month>\d{2})(-(\d{2}))?", "gu")
+    call check(re%is_compiled(), "compiled")
+    call check(re%source() == "(?<year>\d{4})-(?<month>\d{2})(-(\d{2}))?", "source")
+    call check(re%flags() == "gu", "flags")
+    call check(re%group_count() == 4, "group count")
+    call check(re%group_name_count() == 2, "name count")
+    call check(re%group_name(1) == "year" .and. re%group_name(2) == "month" .and. re%group_name(3) == "", "names")
+    call re%compile("a", "yig")
+    call check(re%flags() == "giy", "flags in order")
+    call check(is_valid("a+", "u") .and. .not. is_valid("a{2,1}", "u") .and. is_valid("a{2,1"), "is_valid")
+    call re%compile("(", stat=stat, errmsg=msg)
+    call check(stat == CRE_INVALID_PATTERN .and. len(msg) > 0 .and. .not. re%is_compiled(), "invalid pattern")
+    call re%compile("\p{Nope}", "u", stat=stat)
+    call check(stat == CRE_INVALID_PATTERN, "invalid property")
+    call re%compile("a", "uv", stat=stat)
+    call check(stat == CRE_INVALID_FLAGS, "invalid flags")
+    call re%compile(repeat("(", 1001) // repeat(")", 1001), stat=stat)
+    call check(stat == CRE_PATTERN_TOO_LARGE, "too large")
+    call check(len(library_version()) >= 5, "library version")
+    call check(binding_version == "0.1.1", "binding version")
+  end subroutine compiling
+
+  subroutine testing()
+    type(regex_t) :: re, sticky
+    integer :: stat
+    call re%compile("o+")
+    call check(re%test("foo") .and. .not. re%test("bar"), "test")
+    call sticky%compile("o", "y")
+    call check(.not. sticky%test("foo") .and. sticky%test("foo", start=2_int64), "sticky")
+    call check(.not. re%test("fo" // char(195), stat=stat) .and. stat == CRE_INVALID_UTF8, "invalid UTF-8")
+    call check(last_error_offset() == 2, "error offset")
+  end subroutine testing
+
+  subroutine finding()
+    type(regex_t) :: re
+    type(match_t) :: m
+    character(*), parameter :: text = "a foo, a boo"
+    call re%compile("o+")
+    call check(re%find(text, m), "found")
+    call check(m%matched .and. m%start == 4 .and. m%end == 5 .and. text(m%start:m%end) == "oo", "where")
+    call check(re%find(text, m, start=6_int64) .and. m%start == 11, "from start")
+    call check(.not. re%find("a", m) .and. .not. m%matched, "not found")
+    call re%compile("(?=b)")
+    call check(re%find("ab", m) .and. m%start == 2 .and. m%end == 1, "empty match ends before it starts")
+  end subroutine finding
+
+  subroutine capturing()
+    type(regex_t) :: re
+    type(captures_t) :: caps
+    type(match_t) :: m
+    character(*), parameter :: text = "on 2027-01-31"
+    call re%compile("(?<year>\d{4})-(?<month>\d{2})(-(\d{2}))?", "u")
+    call check(re%exec(text, caps), "exec")
+    call check(caps%count() == 5, "count")
+    m = caps%group(0)
+    call check(text(m%start:m%end) == "2027-01-31", "group 0")
+    m = caps%named("month")
+    call check(text(m%start:m%end) == "01", "named")
+    m = caps%group(4)
+    call check(text(m%start:m%end) == "31", "group 4")
+    m = caps%group(9)
+    call check(.not. m%matched, "no group 9")
+    m = caps%named("nope")
+    call check(.not. m%matched, "no group named nope")
+    call check(re%exec("due 2026-10", caps), "exec again")
+    m = caps%group(3)
+    call check(.not. m%matched, "a group that did not take part")
+    call check(.not. re%exec("none", caps) .and. caps%count() == 0, "no match")
+    call re%compile("(?<d>a)|(?<d>b)", "u")
+    call check(re%exec("b", caps), "exec with a shared name")
+    m = caps%named("d")
+    call check(m%start == 1, "a shared name")
+  end subroutine capturing
+
+  subroutine searching()
+    type(regex_t) :: re
+    type(match_t), allocatable :: all(:), groups(:, :)
+    call re%compile("\d+", "g")
+    call re%find_all("1 22 333", all)
+    call check(size(all) == 3, "three matches")
+    call check(all(2)%start == 3 .and. all(2)%end == 4 .and. all(3)%start == 6 .and. all(3)%end == 8, "where they are")
+    call re%find_all("", all)
+    call check(size(all) == 0, "none")
+    call check(re%count(repeat("1 ", 1000)) == 1000, "count")
+    call re%compile("a", "y")
+    call check(re%count("aab") == 2 .and. re%count("baa") == 0, "sticky count")
+    call re%compile("(\d)(\d)?")
+    call re%exec_all("x1y22z3", groups)
+    call check(size(groups, 1) == 3 .and. size(groups, 2) == 3, "groups shape")
+    call check(.not. groups(2, 1)%matched .and. groups(2, 2)%start == 5 .and. groups(0, 3)%start == 7, "groups")
+    call re%compile("", "gu")
+    call check(re%count("😀") == 2, "empty matches by code point")
+    call re%compile("", "g")
+    call check(re%count("😀") == 3, "empty matches by code unit")
+  end subroutine searching
+
+  subroutine replacing()
+    type(regex_t) :: date, first
+    call date%compile("(?<y>\d{4})-(?<m>\d{2})", "g")
+    call check(date%replace("2026-10, 2027-01", "$<m>/$1") == "10/2026, 01/2027", "template")
+    call first%compile("\d+")
+    call check(first%replace("1 2 3", "[$&]") == "[1] 2 3", "first")
+    call check(first%replace_all("1 2 3", "[$&]") == "[1] [2] [3]", "all")
+    call check(first%replace("a1b", "<$`|$'|$$>") == "a<a|b|$>b", "before, after, dollar")
+    call check(first%replace("none", "x") == "none", "unchanged")
+  end subroutine replacing
+
+  subroutine splitting()
+    type(regex_t) :: re
+    type(piece_t), allocatable :: pieces(:)
+    call re%compile("\s*(;)\s*")
+    call re%split("a ; b;c", pieces)
+    call check(size(pieces) == 5, "five pieces")
+    call check(pieces(1)%value == "a" .and. pieces(2)%value == ";" .and. pieces(5)%value == "c", "pieces")
+    call re%split("a;b;c", pieces, limit=2)
+    call check(size(pieces) == 2, "limit")
+    call re%compile("(x)?,")
+    call re%split("a,b", pieces)
+    call check(size(pieces) == 3 .and. .not. pieces(2)%defined .and. pieces(3)%value == "b", "undefined piece")
+    call re%split("", pieces)
+    call check(size(pieces) == 1 .and. pieces(1)%defined .and. len(pieces(1)%value) == 0, "empty text")
+  end subroutine splitting
+
+  subroutine utf16()
+    type(regex_t) :: re
+    type(match_t) :: m
+    type(match_t), allocatable :: found(:)
+    type(piece16_t), allocatable :: pieces(:)
+    integer(int16), parameter :: lone(3) = [int(z'61', int16), int(z'D800', int16), int(z'62', int16)]
+    integer(int16), parameter :: emoji(2) = [int(z'D83D', int16), int(z'DE00', int16)]
+    call re%compile("o+")
+    call check(re%find(u16("a foo"), m) .and. m%start == 4 .and. m%end == 5, "utf16 find")
+    call re%compile("^...$")
+    call check(re%test(lone), "a lone surrogate is a unit")
+    call re%compile("\ud800")
+    call check(re%find(lone, m) .and. m%start == 2 .and. m%end == 2, "a lone surrogate matched")
+    call re%compile("^..$")
+    call check(re%test(emoji), "a pair is two units without u")
+    call re%compile("^.$", "u")
+    call check(re%test(emoji), "a pair is one character with u")
+    call re%compile("\d+", "g")
+    call re%find_all(u16("x1y22z333"), found)
+    call check(size(found) == 3 .and. found(3)%start == 7 .and. found(3)%end == 9, "utf16 find_all")
+    call check(re%count(u16(repeat("1 ", 100))) == 100, "utf16 count")
+    call check(all(re%replace(u16("a1b"), u16("<$&>")) == u16("a<1>b")), "utf16 replace")
+    call re%compile(",")
+    call re%split(u16("a,b"), pieces)
+    call check(size(pieces) == 2 .and. all(pieces(2)%value == u16("b")), "utf16 split")
+  end subroutine utf16
+
+  subroutine half_characters()
+    type(regex_t) :: re
+    type(match_t) :: m
+    ! Without u a character beyond the Basic Multilingual Plane is two code units, and . takes one: over UTF-8 the
+    ! match ends at the character's third byte.
+    call re%compile("^.")
+    call check(re%find("😀x", m) .and. m%start == 1 .and. m%end == 2, "half a character")
+    call check(re%replace("😀", "x") == "x" // char(239) // char(191) // char(189), "the other half as U+FFFD")
+    call re%compile("^.", "u")
+    call check(re%find("😀x", m) .and. m%end == 4, "the whole character with u")
+  end subroutine half_characters
+
+  subroutine limits()
+    type(regex_t) :: slow
+    integer :: stat
+    logical :: matched
+    call slow%compile("^(a+)+\1$")
+    matched = slow%test(repeat("a", 64) // "!", timeout=0.005_real64, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT .and. .not. matched, "match limit")
+    call slow%compile("^(a+)+$")
+    call check(.not. slow%test(repeat("a", 64) // "!", timeout=1.0_real64), "linear without a backreference")
+  end subroutine limits
+
+  subroutine copying()
+    type(regex_t) :: a, b
+    call a%compile("x+", "gi")
+    b = a
+    call check(b%is_compiled() .and. b%source() == "x+" .and. b%flags() == "gi", "assignment compiles again")
+    call check(b%count("xXx x") == 2, "the copy matches")
+  end subroutine copying
+
+  ! The README's example.
+  subroutine readme()
+    type(regex_t) :: date
+    type(captures_t) :: caps
+    type(match_t) :: m
+    type(piece_t), allocatable :: pieces(:)
+    type(regex_t) :: separator
+    character(*), parameter :: text = "due 2026-10"
+    call date%compile("(?<year>\d{4})-(?<month>\d{2})", "g")
+    call check(date%test(text), "readme test")
+    call check(date%exec(text, caps), "readme exec")
+    m = caps%named("year")
+    call check(text(m%start:m%end) == "2026", "readme year")
+    call check(date%count("2026-10, 2027-01") == 2, "readme count")
+    call check(date%replace("2026-10, 2027-01", "$<month>/$1") == "10/2026, 01/2027", "readme replace")
+    call separator%compile("\s*(;)\s*")
+    call separator%split("a ; b;c", pieces)
+    call check(size(pieces) == 5 .and. pieces(3)%value == "b", "readme split")
+  end subroutine readme
+end program api_test
