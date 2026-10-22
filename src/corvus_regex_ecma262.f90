@@ -23,7 +23,7 @@ module corvus_regex_ecma262
   public :: is_valid, library_version, last_error_offset
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.1.1"
+  character(*), parameter, public :: binding_version = "0.1.2"
 
   ! The outcome of a call (cre_status).
   integer, parameter, public :: CRE_OK = 0
@@ -487,7 +487,7 @@ module corvus_regex_ecma262
 
 contains
 
-  !> The C library's version, such as "0.1.1".
+  !> The C library's version, such as "0.1.2".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())
