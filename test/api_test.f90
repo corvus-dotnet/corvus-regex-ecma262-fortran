@@ -28,6 +28,7 @@ program api_test
   call utf16()
   call half_characters()
   call limits()
+  call timeouts()
   call copying()
   call readme()
   call deep_classes()
@@ -84,7 +85,7 @@ contains
     call re%compile(repeat("(", 1001) // repeat(")", 1001), stat=stat)
     call check(stat == CRE_PATTERN_TOO_LARGE, "too large")
     call check(len(library_version()) >= 5, "library version")
-    call check(binding_version == "0.1.3", "binding version")
+    call check(binding_version == "0.2.0", "binding version")
   end subroutine compiling
 
   subroutine testing()
@@ -282,6 +283,60 @@ contains
     call slow%compile("^(a+)+$")
     call check(.not. slow%test(repeat("a", 64) // "!", timeout=1.0_real64), "linear without a backreference")
   end subroutine limits
+
+  subroutine timeouts()
+    type(regex_t) :: timed, own, none, defaulted, counted
+    type(captures_t) :: caps
+    type(match_t) :: m
+    type(match_t), allocatable :: all(:)
+    type(piece_t), allocatable :: pieces(:)
+    character(:), allocatable :: long, out
+    integer :: stat
+    integer(int64) :: n
+    logical :: matched
+    long = repeat("a", 60) // "b"
+    call timed%compile("^(?:(a+)\1*)+$", "u", timeout=0.03_real64)
+    call check(abs(timed%match_timeout() - 0.03_real64) < 1e-9_real64, "a pattern's timeout")
+    ! Every method that matches gives its match the pattern's timeout.
+    matched = timed%test(long, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, test")
+    matched = timed%find(long, m, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, find")
+    matched = timed%exec(long, caps, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, exec")
+    call timed%find_all(long, all, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, find_all")
+    n = timed%count(long, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, count")
+    out = timed%replace(long, "x", stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, replace")
+    out = timed%replace_all(long, "x", stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, replace_all")
+    call timed%split(long, pieces, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, split")
+    matched = timed%test(utf8_text(long), stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the timeout, test of a checked text")
+    call check(timed%test("aaaa"), "answered within the timeout")
+    call check(timed%replace("aaaa", "<$&>") == "<aaaa>", "replace within the timeout")
+    ! A timeout caps the backtracking memory too.
+    call counted%compile("(?:a?){2147483647}", timeout=3600.0_real64)
+    matched = counted%test("", stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the memory cap")
+    ! The default: none unless set, taken by a pattern compiled without one, and kept by one compiled before.
+    call check(abs(default_match_timeout() - 0.0_real64) < 1e-9_real64, "no default timeout")
+    call set_default_match_timeout(0.03_real64)
+    call check(abs(default_match_timeout() - 0.03_real64) < 1e-9_real64, "the default timeout")
+    call defaulted%compile("^(?:(a+)\1*)+$", "u")
+    call own%compile("a", timeout=5.0_real64)
+    call none%compile("a", timeout=0.0_real64)
+    call set_default_match_timeout(0.0_real64)
+    call check(abs(default_match_timeout() - 0.0_real64) < 1e-9_real64, "the default timeout, reset")
+    call check(abs(defaulted%match_timeout() - 0.03_real64) < 1e-9_real64, "a pattern takes the default")
+    matched = defaulted%test(long, stat=stat)
+    call check(stat == CRE_MATCH_LIMIT, "the default timeout, test")
+    call check(abs(own%match_timeout() - 5.0_real64) < 1e-9_real64, "a pattern keeps its own")
+    call check(abs(none%match_timeout() - 0.0_real64) < 1e-9_real64, "a pattern with none")
+  end subroutine timeouts
 
   subroutine copying()
     type(regex_t) :: a, b

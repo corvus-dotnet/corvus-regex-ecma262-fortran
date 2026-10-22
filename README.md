@@ -12,8 +12,9 @@ library, as an fpm package and a CMake package, for gfortran 11 and later and In
   `(?i:...)`, and every Unicode property ECMA-262 lists, from Unicode 17 tables the library carries.
 - UTF-8 text in a `character` variable (positions in bytes) and UTF-16 text in an `integer(int16)` array (positions
   in code units, lone surrogates and all), each matched as it is held.
-- A pattern without a backreference is matched in time proportional to its size times the text, and the single
-  searches take a timeout, so neither a pattern nor a text from outside can make a program hang.
+- A pattern without a backreference is matched in time proportional to its size times the text, and a pattern can be
+  given a match timeout, as a `Regex` of .NET can, which every procedure honours and which caps the backtracking
+  memory too, so with a timeout neither a pattern nor a text from outside can make a program hang.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
 about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among
@@ -30,7 +31,7 @@ or `--link-flag "-L<lib>"`) and, for the shared library, the loader's (`LD_LIBRA
 
 ```toml
 [dependencies]
-corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.1.3" }
+corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.0" }
 ```
 
 With CMake, give the C library's directory in `CMAKE_PREFIX_PATH`, then add this directory (or install it and
@@ -73,7 +74,8 @@ end program basic
 
 | | |
 |---|---|
-| `call re%compile(pattern, flags, stat, errmsg)` | Compiles a pattern as `new RegExp(pattern, flags)` does. |
+| `call re%compile(pattern, flags, stat, errmsg, timeout)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none); without it the pattern takes the default. |
+| `call set_default_match_timeout(seconds)`, `default_match_timeout()` | The timeout of every pattern compiled without one: 0 (none) unless set. |
 | `is_valid(pattern, flags)` | Whether a pattern is valid, without compiling it. |
 | `utf8_text(text, stat, errmsg)` | The text as a `utf8_text_t`, checked to be UTF-8 here, once, for the procedures below to search unchecked. |
 | `re%test(text, start, timeout)` | `RegExp.prototype.test`, with `lastIndex` at `start - 1` (at `start` alone with `y`). |
@@ -85,7 +87,7 @@ end program basic
 | `re%replace(text, replacement)` | `String.prototype.replace`: the first match, or every match with `g`. |
 | `re%replace_all(text, replacement)` | `String.prototype.replaceAll`: every match. |
 | `call re%split(text, pieces, limit)` | `String.prototype.split`: an array of `piece_t` (`piece16_t` over UTF-16). |
-| `re%source()`, `re%flags()`, `re%group_count()`, `re%group_name_count()`, `re%group_name(i)` | What the pattern is. |
+| `re%source()`, `re%flags()`, `re%match_timeout()`, `re%group_count()`, `re%group_name_count()`, `re%group_name(i)` | What the pattern is. |
 | `caps%group(g)`, `caps%named(name)`, `caps%count()` | The groups of the last match of `exec`. |
 | `library_version()`, `binding_version` | The C library's and this binding's versions. |
 
@@ -104,6 +106,12 @@ replacement or a split that leaves half a character writes it as U+FFFD over UTF
 is `CRE_OK`, `CRE_INVALID_PATTERN`, `CRE_INVALID_FLAGS`, `CRE_PATTERN_TOO_LARGE`, `CRE_INVALID_UTF8`,
 `CRE_MATCH_LIMIT` (a match that reached its timeout or its cap on backtracking memory) or `CRE_INVALID_ARGUMENT`.
 When `stat` is absent, a failure stops the program with its message.
+
+**Timeouts.** A pattern has a match timeout, as a `Regex` of .NET has: `call re%compile(pattern, "u", timeout=1.0_real64)`,
+or for every pattern compiled after it `call set_default_match_timeout(1.0_real64)`. Every procedure that matches gives
+each of its matches the timeout, and a match that reaches it reports `CRE_MATCH_LIMIT`; `test`, `find` and `exec` take
+a `timeout` of their own in its place. Without a timeout (the default) a match has no limit of time or of memory, so a
+program that matches a pattern or a text it did not write should set one.
 
 **Handles.** A `regex_t` and a `captures_t` free what they hold when they are finalized. A `regex_t` is immutable once
 compiled and may be used from any number of threads; assigning one to another compiles the same pattern again. A

@@ -21,9 +21,10 @@ module corvus_regex_ecma262
 
   public :: regex_t, captures_t, match_t, piece_t, piece16_t, utf8_text_t
   public :: is_valid, library_version, last_error_offset, utf8_text
+  public :: set_default_match_timeout, default_match_timeout
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.1.3"
+  character(*), parameter, public :: binding_version = "0.2.0"
 
   ! The outcome of a call (cre_status).
   integer, parameter, public :: CRE_OK = 0
@@ -94,6 +95,7 @@ module corvus_regex_ecma262
     procedure :: is_compiled => regex_is_compiled
     procedure :: source => regex_source
     procedure :: flags => regex_flags
+    procedure :: match_timeout => regex_match_timeout
     procedure :: group_count => regex_group_count
     procedure :: group_name_count => regex_group_name_count
     procedure :: group_name => regex_group_name
@@ -161,6 +163,32 @@ module corvus_regex_ecma262
       type(c_ptr), intent(out) :: out
       integer(c_int32_t) :: status
     end function cre_regex_new
+
+    function cre_regex_new_with_timeout(pattern, pattern_len, flags, flags_len, timeout_ms, out) &
+        bind(c, name="cre_regex_new_with_timeout") result(status)
+      import :: c_char, c_size_t, c_ptr, c_int32_t, c_int64_t
+      character(kind=c_char), intent(in) :: pattern(*), flags(*)
+      integer(c_size_t), value :: pattern_len, flags_len
+      integer(c_int64_t), value :: timeout_ms
+      type(c_ptr), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_new_with_timeout
+
+    function cre_regex_match_timeout(regex) bind(c, name="cre_regex_match_timeout") result(ms)
+      import :: c_ptr, c_int64_t
+      type(c_ptr), value :: regex
+      integer(c_int64_t) :: ms
+    end function cre_regex_match_timeout
+
+    subroutine cre_set_default_match_timeout(timeout_ms) bind(c, name="cre_set_default_match_timeout")
+      import :: c_int64_t
+      integer(c_int64_t), value :: timeout_ms
+    end subroutine cre_set_default_match_timeout
+
+    function cre_default_match_timeout() bind(c, name="cre_default_match_timeout") result(ms)
+      import :: c_int64_t
+      integer(c_int64_t) :: ms
+    end function cre_default_match_timeout
 
     subroutine cre_regex_free(regex) bind(c, name="cre_regex_free")
       import :: c_ptr
@@ -608,7 +636,7 @@ module corvus_regex_ecma262
 
 contains
 
-  !> The C library's version, such as "0.1.3".
+  !> The C library's version, such as "0.2.0".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())
@@ -704,6 +732,28 @@ contains
     integer(c_int64_t) :: ms
     ms = max(1_c_int64_t, int(ceiling(timeout * 1000.0_real64), c_int64_t))
   end function limit_of
+
+  ! A match timeout in seconds as the C library's milliseconds: 0 (none) for zero or less, and at least 1 ms otherwise.
+  pure function timeout_ms_of(timeout) result(ms)
+    real(real64), intent(in) :: timeout
+    integer(c_int64_t) :: ms
+    ms = 0
+    if (timeout > 0.0_real64) ms = limit_of(timeout)
+  end function timeout_ms_of
+
+  !> Sets the match timeout, in seconds, of every regular expression compiled from now on without one of its own (0
+  !> for none, the default). It is the process-wide default of .NET's REGEX_DEFAULT_MATCH_TIMEOUT: a program that
+  !> matches patterns or texts from outside should set one when it starts. A regular expression already compiled keeps
+  !> its own.
+  subroutine set_default_match_timeout(seconds)
+    real(real64), intent(in) :: seconds
+    call cre_set_default_match_timeout(timeout_ms_of(seconds))
+  end subroutine set_default_match_timeout
+
+  !> The match timeout, in seconds, of a regular expression compiled now without one of its own (0 for none).
+  real(real64) function default_match_timeout()
+    default_match_timeout = real(cre_default_match_timeout(), real64) / 1000.0_real64
+  end function default_match_timeout
 
   ! Reports a status through stat, and its message through message (empty for CRE_OK), or stops the program with the
   ! message when stat is absent. The caller copies message to its errmsg: an optional deferred-length character
@@ -919,18 +969,28 @@ contains
 
   !> Compiles a pattern with the flags new RegExp(pattern, flags) takes, any of dgimsuvy. On failure stat is
   !> CRE_INVALID_PATTERN, CRE_INVALID_FLAGS, CRE_PATTERN_TOO_LARGE or CRE_INVALID_UTF8, and the regular expression is
-  !> not compiled.
-  subroutine regex_compile(self, pattern, flags, stat, errmsg)
+  !> not compiled. timeout is the time in seconds each match may take before it is abandoned with CRE_MATCH_LIMIT (0
+  !> for none); without it the regular expression takes default_match_timeout(), which is none unless set. A timeout
+  !> also caps the backtracking memory of a match; without one a match has no limit of time or of memory, so give a
+  !> pattern or a text from outside one.
+  subroutine regex_compile(self, pattern, flags, stat, errmsg, timeout)
     class(regex_t), intent(inout) :: self
     character(*), intent(in) :: pattern
     character(*), intent(in), optional :: flags
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
+    real(real64), intent(in), optional :: timeout
     character(:), allocatable :: message
     integer(c_int32_t) :: status
     call cre_regex_free(self%handle)
     self%handle = c_null_ptr
-    if (present(flags)) then
+    if (present(timeout) .and. present(flags)) then
+      status = cre_regex_new_with_timeout(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), &
+        timeout_ms_of(timeout), self%handle)
+    else if (present(timeout)) then
+      status = cre_regex_new_with_timeout(pattern, len(pattern, c_size_t), "", 0_c_size_t, timeout_ms_of(timeout), &
+        self%handle)
+    else if (present(flags)) then
       status = cre_regex_new(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), self%handle)
     else
       status = cre_regex_new(pattern, len(pattern, c_size_t), "", 0_c_size_t, self%handle)
@@ -944,6 +1004,13 @@ contains
     class(regex_t), intent(in) :: self
     regex_is_compiled = c_associated(self%handle)
   end function regex_is_compiled
+
+  !> The time in seconds each match may take before it is abandoned with CRE_MATCH_LIMIT (0 for none, and when not
+  !> compiled).
+  real(real64) function regex_match_timeout(self)
+    class(regex_t), intent(in) :: self
+    regex_match_timeout = real(cre_regex_match_timeout(self%handle), real64) / 1000.0_real64
+  end function regex_match_timeout
 
   !> The source of the pattern, as it was given ("" when not compiled).
   function regex_source(self) result(text)
