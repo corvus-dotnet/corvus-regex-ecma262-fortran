@@ -14,8 +14,9 @@
 ! finish in two minutes is stopped and recorded as such.
 !
 ! The engines, each counting every match of a global search as a Fortran program would:
-! - corvus-utf8 and corvus-utf16: this binding with the workload's flags and u, over the text as a character variable
-!   (UTF-8) and as an integer(int16) array (UTF-16), with regex_t%count;
+! - corvus-utf8 and corvus-utf16: this binding with the workload's flags and u, over the text as a utf8_text_t (UTF-8,
+!   checked once when it is made, as a Fortran program that searches a text more than once makes it) and as an
+!   integer(int16) array (UTF-16), with regex_t%count;
 ! - posix: the C library's POSIX regex (regcomp and regexec, extended syntax) through ISO_C_BINDING, which does not
 !   claim ECMA-262, given the pattern as it is with REG_ICASE for i and REG_NEWLINE for m, a search going on after
 !   each match (one byte on after an empty one);
@@ -167,10 +168,11 @@ contains
   end function now
 
   ! The counts of one engine, by the engine's name: the count, or -1 with a message for a pattern it refuses.
-  subroutine count_of(engine, re, text, units, preg, buffer, fre, n, message)
+  subroutine count_of(engine, re, text, checked, units, preg, buffer, fre, n, message)
     character(*), intent(in) :: engine
     type(regex_t), intent(in) :: re
     character(*), intent(in) :: text
+    type(utf8_text_t), intent(in) :: checked
     ! Contiguous, as regex_t%count takes it: otherwise each count would copy the text first.
     integer(int16), intent(in), contiguous :: units(:)
     type(c_ptr), intent(in) :: preg
@@ -184,7 +186,7 @@ contains
     n = 0
     select case (engine)
     case ("corvus-utf8")
-      n = re%count(text)
+      n = re%count(checked)
     case ("corvus-utf16")
       n = re%count(units)
     case ("posix")
@@ -231,6 +233,7 @@ contains
     character(:), allocatable :: pattern, flags, file, text, message, f
     integer(int16), allocatable :: units(:)
     type(regex_t) :: re
+    type(utf8_text_t) :: checked
     type(regex_pattern) :: fre
     character(kind=c_char), allocatable, target :: buffer(:), preg(:)
     integer(c_int) :: cflags
@@ -260,6 +263,7 @@ contains
         print "(a)", '{"error":"' // json_escape(message) // '"}'
         return
       end if
+      if (engine == "corvus-utf8") checked = utf8_text(text)
       if (engine == "corvus-utf16") units = utf16_of(text)
     case ("posix")
       cflags = reg_extended
@@ -283,7 +287,7 @@ contains
       print "(a)", '{"error":"unknown engine ' // engine // '"}'
       return
     end select
-    call count_of(engine, re, text, units, c_loc(preg), buffer, fre, expected, message)
+    call count_of(engine, re, text, checked, units, c_loc(preg), buffer, fre, expected, message)
     if (expected < 0) then
       print "(a)", '{"error":"' // json_escape(message) // '"}'
       return
@@ -291,7 +295,7 @@ contains
     warm_end = now() + int(seconds * 0.4e9_real64, int64)
     reps = 0
     do while (now() < warm_end)
-      call count_of(engine, re, text, units, c_loc(preg), buffer, fre, got, message)
+      call count_of(engine, re, text, checked, units, c_loc(preg), buffer, fre, got, message)
       if (got /= expected) then
         print "(a)", '{"error":"the count changed"}'
         return
@@ -303,7 +307,7 @@ contains
     do k = 1, passes
       t0 = now()
       do i = 1, per_pass
-        call count_of(engine, re, text, units, c_loc(preg), buffer, fre, got, message)
+        call count_of(engine, re, text, checked, units, c_loc(preg), buffer, fre, got, message)
       end do
       times(k) = real(now() - t0, real64) / real(per_pass, real64)
     end do

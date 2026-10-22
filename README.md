@@ -30,7 +30,7 @@ or `--link-flag "-L<lib>"`) and, for the shared library, the loader's (`LD_LIBRA
 
 ```toml
 [dependencies]
-corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.1.2" }
+corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.1.3" }
 ```
 
 With CMake, give the C library's directory in `CMAKE_PREFIX_PATH`, then add this directory (or install it and
@@ -75,6 +75,7 @@ end program basic
 |---|---|
 | `call re%compile(pattern, flags, stat, errmsg)` | Compiles a pattern as `new RegExp(pattern, flags)` does. |
 | `is_valid(pattern, flags)` | Whether a pattern is valid, without compiling it. |
+| `utf8_text(text, stat, errmsg)` | The text as a `utf8_text_t`, checked to be UTF-8 here, once, for the procedures below to search unchecked. |
 | `re%test(text, start, timeout)` | `RegExp.prototype.test`, with `lastIndex` at `start - 1` (at `start` alone with `y`). |
 | `re%find(text, match, start, timeout)` | The first match at or after `start`, as `exec` finds it: whether there is one, and `match`. |
 | `re%exec(text, captures, start, timeout)` | The first match with what each group captured, by number and by name, in a `captures_t`. |
@@ -88,10 +89,12 @@ end program basic
 | `caps%group(g)`, `caps%named(name)`, `caps%count()` | The groups of the last match of `exec`. |
 | `library_version()`, `binding_version` | The C library's and this binding's versions. |
 
-Each matching procedure takes a `character(*)` (UTF-8) or an `integer(int16)` array (UTF-16), and timeouts are in
-seconds. A `match_t` has `start` and `end`, from 1 and inclusive, so `text(m%start:m%end)` is the match (an empty match
-ends one before it starts), and `matched`, false for a group that did not take part. A `piece_t` has `value` and
-`defined`, false for a group that did not take part.
+Each matching procedure takes a `character(*)` (UTF-8), a `utf8_text_t` (UTF-8 checked once) or an `integer(int16)`
+array (UTF-16), and timeouts are in seconds. A `character(*)` text is checked to be UTF-8 on every call, which reads the
+whole text; a text searched more than once can be checked once instead, with `t = utf8_text(text)`, and each procedure
+then searches `t` without the check. A `match_t` has `start` and `end`, from 1 and inclusive, so `text(m%start:m%end)`
+is the match (an empty match ends one before it starts), and `matched`, false for a group that did not take part. A
+`piece_t` has `value` and `defined`, false for a group that did not take part.
 
 **Half characters.** Without `u` or `v` a match can take half of a character beyond the Basic Multilingual Plane.
 Over UTF-8 its start or end is then the character's third byte; over UTF-16 it is the lone half, as in JavaScript. A

@@ -19,11 +19,11 @@ module corvus_regex_ecma262
   implicit none
   private
 
-  public :: regex_t, captures_t, match_t, piece_t, piece16_t
-  public :: is_valid, library_version, last_error_offset
+  public :: regex_t, captures_t, match_t, piece_t, piece16_t, utf8_text_t
+  public :: is_valid, library_version, last_error_offset, utf8_text
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.1.2"
+  character(*), parameter, public :: binding_version = "0.1.3"
 
   ! The outcome of a call (cre_status).
   integer, parameter, public :: CRE_OK = 0
@@ -77,6 +77,14 @@ module corvus_regex_ecma262
     integer(c_size_t) :: end = unset
   end type cre_match
 
+  !> A UTF-8 text, checked once when utf8_text makes it, which regex_t's methods search without checking it again: a
+  !> character argument is checked on every call, a read of the whole text each time. Only utf8_text gives one a text,
+  !> so it always holds UTF-8; one never assigned from utf8_text is searched as an empty text.
+  type :: utf8_text_t
+    private
+    character(:), allocatable :: value
+  end type utf8_text_t
+
   !> A compiled regular expression. Immutable once compiled: any number of threads may use one at once.
   type :: regex_t
     private
@@ -89,24 +97,24 @@ module corvus_regex_ecma262
     procedure :: group_count => regex_group_count
     procedure :: group_name_count => regex_group_name_count
     procedure :: group_name => regex_group_name
-    procedure, private :: test_utf8, test_utf16
-    generic :: test => test_utf8, test_utf16
-    procedure, private :: find_utf8, find_utf16
-    generic :: find => find_utf8, find_utf16
-    procedure, private :: exec_utf8, exec_utf16
-    generic :: exec => exec_utf8, exec_utf16
-    procedure, private :: find_all_utf8, find_all_utf16
-    generic :: find_all => find_all_utf8, find_all_utf16
-    procedure, private :: exec_all_utf8, exec_all_utf16
-    generic :: exec_all => exec_all_utf8, exec_all_utf16
-    procedure, private :: count_utf8, count_utf16
-    generic :: count => count_utf8, count_utf16
-    procedure, private :: replace_utf8, replace_utf16
-    generic :: replace => replace_utf8, replace_utf16
-    procedure, private :: replace_all_utf8, replace_all_utf16
-    generic :: replace_all => replace_all_utf8, replace_all_utf16
-    procedure, private :: split_utf8, split_utf16
-    generic :: split => split_utf8, split_utf16
+    procedure, private :: test_utf8, test_utf16, test_text
+    generic :: test => test_utf8, test_utf16, test_text
+    procedure, private :: find_utf8, find_utf16, find_text
+    generic :: find => find_utf8, find_utf16, find_text
+    procedure, private :: exec_utf8, exec_utf16, exec_text
+    generic :: exec => exec_utf8, exec_utf16, exec_text
+    procedure, private :: find_all_utf8, find_all_utf16, find_all_text
+    generic :: find_all => find_all_utf8, find_all_utf16, find_all_text
+    procedure, private :: exec_all_utf8, exec_all_utf16, exec_all_text
+    generic :: exec_all => exec_all_utf8, exec_all_utf16, exec_all_text
+    procedure, private :: count_utf8, count_utf16, count_text
+    generic :: count => count_utf8, count_utf16, count_text
+    procedure, private :: replace_utf8, replace_utf16, replace_text
+    generic :: replace => replace_utf8, replace_utf16, replace_text
+    procedure, private :: replace_all_utf8, replace_all_utf16, replace_all_text
+    generic :: replace_all => replace_all_utf8, replace_all_utf16, replace_all_text
+    procedure, private :: split_utf8, split_utf16, split_text
+    generic :: split => split_utf8, split_utf16, split_text
     generic :: assignment(=) => regex_assign
     procedure, private :: regex_assign
     final :: regex_final
@@ -483,11 +491,124 @@ module corvus_regex_ecma262
       import :: cre_pieces
       type(cre_pieces), intent(inout) :: pieces
     end subroutine cre_pieces16_free
+
+    function cre_regex_is_match_unchecked(regex, text, len, out) &
+        bind(c, name="cre_regex_is_match_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_bool, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      logical(c_bool), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_is_match_unchecked
+
+    function cre_regex_is_match_limit_unchecked(regex, text, len, limit, out) &
+        bind(c, name="cre_regex_is_match_limit_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int64_t, c_bool, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      integer(c_int64_t), value :: limit
+      logical(c_bool), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_is_match_limit_unchecked
+
+    function cre_regex_is_match_at_unchecked(regex, text, len, start, out) &
+        bind(c, name="cre_regex_is_match_at_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_bool, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len, start
+      logical(c_bool), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_is_match_at_unchecked
+
+    function cre_regex_find_limit_unchecked(regex, text, len, start, limit, match, found) &
+        bind(c, name="cre_regex_find_limit_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int64_t, c_bool, c_int32_t, cre_match
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len, start
+      integer(c_int64_t), value :: limit
+      type(cre_match), intent(out) :: match
+      logical(c_bool), intent(out) :: found
+      integer(c_int32_t) :: status
+    end function cre_regex_find_limit_unchecked
+
+    function cre_regex_captures_limit_unchecked(regex, text, len, start, limit, captures, found) &
+        bind(c, name="cre_regex_captures_limit_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int64_t, c_bool, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len, start
+      integer(c_int64_t), value :: limit
+      type(c_ptr), value :: captures
+      logical(c_bool), intent(out) :: found
+      integer(c_int32_t) :: status
+    end function cre_regex_captures_limit_unchecked
+
+    function cre_regex_find_iter_unchecked(regex, text, len, out) &
+        bind(c, name="cre_regex_find_iter_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      type(c_ptr), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_find_iter_unchecked
+
+    function cre_regex_captures_iter_unchecked(regex, text, len, out) &
+        bind(c, name="cre_regex_captures_iter_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int32_t
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      type(c_ptr), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_captures_iter_unchecked
+
+    function cre_regex_replace_unchecked(regex, text, len, replacement, replacement_len, out) &
+        bind(c, name="cre_regex_replace_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int32_t, cre_str
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*), replacement(*)
+      integer(c_size_t), value :: len, replacement_len
+      type(cre_str), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_replace_unchecked
+
+    function cre_regex_replace_all_unchecked(regex, text, len, replacement, replacement_len, out) &
+        bind(c, name="cre_regex_replace_all_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int32_t, cre_str
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*), replacement(*)
+      integer(c_size_t), value :: len, replacement_len
+      type(cre_str), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_replace_all_unchecked
+
+    function cre_regex_split_unchecked(regex, text, len, limit, out) &
+        bind(c, name="cre_regex_split_unchecked") result(status)
+      import :: c_ptr, c_char, c_size_t, c_int32_t, cre_pieces
+      type(c_ptr), value :: regex
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      integer(c_int32_t), value :: limit
+      type(cre_pieces), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_split_unchecked
+
+    function cre_utf8_check(text, len) bind(c, name="cre_utf8_check") result(status)
+      import :: c_char, c_size_t, c_int32_t
+      character(kind=c_char), intent(in) :: text(*)
+      integer(c_size_t), value :: len
+      integer(c_int32_t) :: status
+    end function cre_utf8_check
   end interface
 
 contains
 
-  !> The C library's version, such as "0.1.2".
+  !> The C library's version, such as "0.1.3".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())
@@ -518,6 +639,26 @@ contains
     valid = logical(out)
     if (present(errmsg)) errmsg = message
   end function is_valid
+
+  !> The text as a utf8_text_t, checked to be UTF-8 here, once: regex_t's methods then search it without checking it
+  !> again. A text that is not UTF-8 is CRE_INVALID_UTF8 (last_error_offset is where it stops being UTF-8), and the
+  !> result holds an empty text.
+  function utf8_text(text, stat, errmsg) result(checked)
+    character(*), intent(in) :: text
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    type(utf8_text_t) :: checked
+    character(:), allocatable :: message
+    integer(c_int32_t) :: status
+    status = cre_utf8_check(text, len(text, c_size_t))
+    call report(status, stat, message)
+    if (status == CRE_OK) then
+      checked%value = text
+    else
+      checked%value = ""
+    end if
+    if (present(errmsg)) errmsg = message
+  end function utf8_text
 
   ! A copy of a UTF-8 string the C library owns.
   function from_str(text) result(value)
@@ -581,6 +722,162 @@ contains
       error stop 1
     end if
   end subroutine report
+
+  ! cre_regex_is_match, or for a text checked once (a utf8_text_t) cre_regex_is_match_unchecked.
+  function utf8_is_match(unchecked, regex, text, len, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len
+    logical(c_bool), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_is_match_unchecked(regex, text, len, out)
+    else
+      status = cre_regex_is_match(regex, text, len, out)
+    end if
+  end function utf8_is_match
+
+  ! cre_regex_is_match_limit, or for a text checked once (a utf8_text_t) cre_regex_is_match_limit_unchecked.
+  function utf8_is_match_limit(unchecked, regex, text, len, limit, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len
+    integer(c_int64_t), value :: limit
+    logical(c_bool), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_is_match_limit_unchecked(regex, text, len, limit, out)
+    else
+      status = cre_regex_is_match_limit(regex, text, len, limit, out)
+    end if
+  end function utf8_is_match_limit
+
+  ! cre_regex_is_match_at, or for a text checked once (a utf8_text_t) cre_regex_is_match_at_unchecked.
+  function utf8_is_match_at(unchecked, regex, text, len, start, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len, start
+    logical(c_bool), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_is_match_at_unchecked(regex, text, len, start, out)
+    else
+      status = cre_regex_is_match_at(regex, text, len, start, out)
+    end if
+  end function utf8_is_match_at
+
+  ! cre_regex_find_limit, or for a text checked once (a utf8_text_t) cre_regex_find_limit_unchecked.
+  function utf8_find_limit(unchecked, regex, text, len, start, limit, match, found) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len, start
+    integer(c_int64_t), value :: limit
+    type(cre_match), intent(out) :: match
+    logical(c_bool), intent(out) :: found
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_find_limit_unchecked(regex, text, len, start, limit, match, found)
+    else
+      status = cre_regex_find_limit(regex, text, len, start, limit, match, found)
+    end if
+  end function utf8_find_limit
+
+  ! cre_regex_captures_limit, or for a text checked once (a utf8_text_t) cre_regex_captures_limit_unchecked.
+  function utf8_captures_limit(unchecked, regex, text, len, start, limit, captures, found) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len, start
+    integer(c_int64_t), value :: limit
+    type(c_ptr), value :: captures
+    logical(c_bool), intent(out) :: found
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_captures_limit_unchecked(regex, text, len, start, limit, captures, found)
+    else
+      status = cre_regex_captures_limit(regex, text, len, start, limit, captures, found)
+    end if
+  end function utf8_captures_limit
+
+  ! cre_regex_find_iter, or for a text checked once (a utf8_text_t) cre_regex_find_iter_unchecked.
+  function utf8_find_iter(unchecked, regex, text, len, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len
+    type(c_ptr), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_find_iter_unchecked(regex, text, len, out)
+    else
+      status = cre_regex_find_iter(regex, text, len, out)
+    end if
+  end function utf8_find_iter
+
+  ! cre_regex_captures_iter, or for a text checked once (a utf8_text_t) cre_regex_captures_iter_unchecked.
+  function utf8_captures_iter(unchecked, regex, text, len, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len
+    type(c_ptr), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_captures_iter_unchecked(regex, text, len, out)
+    else
+      status = cre_regex_captures_iter(regex, text, len, out)
+    end if
+  end function utf8_captures_iter
+
+  ! cre_regex_replace, or for a text checked once (a utf8_text_t) cre_regex_replace_unchecked.
+  function utf8_replace(unchecked, regex, text, len, replacement, replacement_len, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*), replacement(*)
+    integer(c_size_t), value :: len, replacement_len
+    type(cre_str), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_replace_unchecked(regex, text, len, replacement, replacement_len, out)
+    else
+      status = cre_regex_replace(regex, text, len, replacement, replacement_len, out)
+    end if
+  end function utf8_replace
+
+  ! cre_regex_replace_all, or for a text checked once (a utf8_text_t) cre_regex_replace_all_unchecked.
+  function utf8_replace_all(unchecked, regex, text, len, replacement, replacement_len, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*), replacement(*)
+    integer(c_size_t), value :: len, replacement_len
+    type(cre_str), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_replace_all_unchecked(regex, text, len, replacement, replacement_len, out)
+    else
+      status = cre_regex_replace_all(regex, text, len, replacement, replacement_len, out)
+    end if
+  end function utf8_replace_all
+
+  ! cre_regex_split, or for a text checked once (a utf8_text_t) cre_regex_split_unchecked.
+  function utf8_split(unchecked, regex, text, len, limit, out) result(status)
+    logical, intent(in) :: unchecked
+    type(c_ptr), value :: regex
+    character(kind=c_char), intent(in) :: text(*)
+    integer(c_size_t), value :: len
+    integer(c_int32_t), value :: limit
+    type(cre_pieces), intent(out) :: out
+    integer(c_int32_t) :: status
+    if (unchecked) then
+      status = cre_regex_split_unchecked(regex, text, len, limit, out)
+    else
+      status = cre_regex_split(regex, text, len, limit, out)
+    end if
+  end function utf8_split
 
   ! A failure the binding finds itself (a regular expression that is not compiled), reported as CRE_INVALID_ARGUMENT.
   subroutine report_misuse(what, stat, message)
@@ -696,23 +993,54 @@ contains
     character(:), allocatable, intent(out), optional :: errmsg
     logical :: matched
     character(:), allocatable :: message
+    matched = test_impl(self, text, .false., start, timeout, stat, message)
+    if (present(errmsg)) errmsg = message
+  end function test_utf8
+
+  function test_text(self, text, start, timeout, stat, errmsg) result(matched)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    logical :: matched
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      matched = test_impl(self, text%value, .true., start, timeout, stat, message)
+    else
+      matched = test_impl(self, "", .true., start, timeout, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function test_text
+
+  function test_impl(self, text, unchecked, start, timeout, stat, message) result(matched)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    logical :: matched
+    character(:), allocatable, intent(out) :: message
     logical(c_bool) :: out
     type(cre_match) :: m
     integer(c_int32_t) :: status
     ! From the start the match need not be found to its end; from elsewhere only find takes a limit.
     if (present(timeout) .and. .not. present(start)) then
-      status = cre_regex_is_match_limit(self%handle, text, len(text, c_size_t), limit_of(timeout), out)
+      status = utf8_is_match_limit(unchecked, self%handle, text, len(text, c_size_t), limit_of(timeout), out)
     else if (present(timeout)) then
-      status = cre_regex_find_limit(self%handle, text, len(text, c_size_t), start_of(start), limit_of(timeout), m, out)
+      status = utf8_find_limit(unchecked, self%handle, text, len(text, c_size_t), start_of(start), limit_of(timeout), &
+                               m, out)
     else if (present(start)) then
-      status = cre_regex_is_match_at(self%handle, text, len(text, c_size_t), start_of(start), out)
+      status = utf8_is_match_at(unchecked, self%handle, text, len(text, c_size_t), start_of(start), out)
     else
-      status = cre_regex_is_match(self%handle, text, len(text, c_size_t), out)
+      status = utf8_is_match(unchecked, self%handle, text, len(text, c_size_t), out)
     end if
     call report(status, stat, message)
     matched = logical(out)
-    if (present(errmsg)) errmsg = message
-  end function test_utf8
+  end function test_impl
 
   function test_utf16(self, text, start, timeout, stat, errmsg) result(matched)
     class(regex_t), intent(in) :: self
@@ -753,17 +1081,49 @@ contains
     character(:), allocatable, intent(out), optional :: errmsg
     logical :: found
     character(:), allocatable :: message
+    found = find_impl(self, text, .false., match, start, timeout, stat, message)
+    if (present(errmsg)) errmsg = message
+  end function find_utf8
+
+  function find_text(self, text, match, start, timeout, stat, errmsg) result(found)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    type(match_t), intent(out) :: match
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    logical :: found
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      found = find_impl(self, text%value, .true., match, start, timeout, stat, message)
+    else
+      found = find_impl(self, "", .true., match, start, timeout, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function find_text
+
+  function find_impl(self, text, unchecked, match, start, timeout, stat, message) result(found)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    type(match_t), intent(out) :: match
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    logical :: found
+    character(:), allocatable, intent(out) :: message
     logical(c_bool) :: out
     type(cre_match) :: m
     integer(c_int64_t) :: limit
     limit = 0
     if (present(timeout)) limit = limit_of(timeout)
-    call report(cre_regex_find_limit(self%handle, text, len(text, c_size_t), start_of(start), limit, m, out), stat, &
-                message)
+    call report(utf8_find_limit(unchecked, self%handle, text, len(text, c_size_t), start_of(start), limit, m, out), &
+                stat, message)
     found = logical(out)
     match = to_match(m)
-    if (present(errmsg)) errmsg = message
-  end function find_utf8
+  end function find_impl
 
   function find_utf16(self, text, match, start, timeout, stat, errmsg) result(found)
     class(regex_t), intent(in) :: self
@@ -839,6 +1199,39 @@ contains
     character(:), allocatable, intent(out), optional :: errmsg
     logical :: found
     character(:), allocatable :: message
+    found = exec_impl(self, text, .false., captures, start, timeout, stat, message)
+    if (present(errmsg)) errmsg = message
+  end function exec_utf8
+
+  function exec_text(self, text, captures, start, timeout, stat, errmsg) result(found)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    type(captures_t), intent(inout) :: captures
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    logical :: found
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      found = exec_impl(self, text%value, .true., captures, start, timeout, stat, message)
+    else
+      found = exec_impl(self, "", .true., captures, start, timeout, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function exec_text
+
+  function exec_impl(self, text, unchecked, captures, start, timeout, stat, message) result(found)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    type(captures_t), intent(inout) :: captures
+    integer(int64), intent(in), optional :: start
+    real(real64), intent(in), optional :: timeout
+    integer, intent(out), optional :: stat
+    logical :: found
+    character(:), allocatable, intent(out) :: message
     logical(c_bool) :: out
     integer(c_int32_t) :: status
     integer(c_int64_t) :: limit
@@ -847,13 +1240,12 @@ contains
     out = .false.
     call prepare(self, captures, status)
     if (status == CRE_OK) then
-      status = cre_regex_captures_limit(self%handle, text, len(text, c_size_t), start_of(start), limit, &
+      status = utf8_captures_limit(unchecked, self%handle, text, len(text, c_size_t), start_of(start), limit, &
                                         captures%handle, out)
     end if
     call report(status, stat, message)
     found = logical(out)
-    if (present(errmsg)) errmsg = message
-  end function exec_utf8
+  end function exec_impl
 
   function exec_utf16(self, text, captures, start, timeout, stat, errmsg) result(found)
     class(regex_t), intent(in) :: self
@@ -920,13 +1312,39 @@ contains
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     character(:), allocatable :: message
-    type(c_ptr) :: iter
-    integer(c_int32_t) :: status
-    status = cre_regex_find_iter(self%handle, text, len(text, c_size_t), iter)
-    call collect(iter, matches, status)
-    call report(status, stat, message)
+    call find_all_impl(self, text, .false., matches, stat, message)
     if (present(errmsg)) errmsg = message
   end subroutine find_all_utf8
+
+  subroutine find_all_text(self, text, matches, stat, errmsg)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    type(match_t), allocatable, intent(out) :: matches(:)
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      call find_all_impl(self, text%value, .true., matches, stat, message)
+    else
+      call find_all_impl(self, "", .true., matches, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end subroutine find_all_text
+
+  subroutine find_all_impl(self, text, unchecked, matches, stat, message)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    type(match_t), allocatable, intent(out) :: matches(:)
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out) :: message
+    type(c_ptr) :: iter
+    integer(c_int32_t) :: status
+    status = utf8_find_iter(unchecked, self%handle, text, len(text, c_size_t), iter)
+    call collect(iter, matches, status)
+    call report(status, stat, message)
+  end subroutine find_all_impl
 
   subroutine find_all_utf16(self, text, matches, stat, errmsg)
     class(regex_t), intent(in) :: self
@@ -989,13 +1407,39 @@ contains
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     character(:), allocatable :: message
-    type(c_ptr) :: iter
-    integer(c_int32_t) :: status
-    status = cre_regex_captures_iter(self%handle, text, len(text, c_size_t), iter)
-    call collect_groups(iter, self%group_count() + 1, groups, status)
-    call report(status, stat, message)
+    call exec_all_impl(self, text, .false., groups, stat, message)
     if (present(errmsg)) errmsg = message
   end subroutine exec_all_utf8
+
+  subroutine exec_all_text(self, text, groups, stat, errmsg)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    type(match_t), allocatable, intent(out) :: groups(:, :)
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      call exec_all_impl(self, text%value, .true., groups, stat, message)
+    else
+      call exec_all_impl(self, "", .true., groups, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end subroutine exec_all_text
+
+  subroutine exec_all_impl(self, text, unchecked, groups, stat, message)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    type(match_t), allocatable, intent(out) :: groups(:, :)
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out) :: message
+    type(c_ptr) :: iter
+    integer(c_int32_t) :: status
+    status = utf8_captures_iter(unchecked, self%handle, text, len(text, c_size_t), iter)
+    call collect_groups(iter, self%group_count() + 1, groups, status)
+    call report(status, stat, message)
+  end subroutine exec_all_impl
 
   subroutine exec_all_utf16(self, text, groups, stat, errmsg)
     class(regex_t), intent(in) :: self
@@ -1037,13 +1481,39 @@ contains
     character(:), allocatable, intent(out), optional :: errmsg
     integer(int64) :: n
     character(:), allocatable :: message
-    type(c_ptr) :: iter
-    integer(c_int32_t) :: status
-    status = cre_regex_find_iter(self%handle, text, len(text, c_size_t), iter)
-    n = tally(iter, status)
-    call report(status, stat, message)
+    n = count_impl(self, text, .false., stat, message)
     if (present(errmsg)) errmsg = message
   end function count_utf8
+
+  function count_text(self, text, stat, errmsg) result(n)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    integer(int64) :: n
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      n = count_impl(self, text%value, .true., stat, message)
+    else
+      n = count_impl(self, "", .true., stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function count_text
+
+  function count_impl(self, text, unchecked, stat, message) result(n)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    integer, intent(out), optional :: stat
+    integer(int64) :: n
+    character(:), allocatable, intent(out) :: message
+    type(c_ptr) :: iter
+    integer(c_int32_t) :: status
+    status = utf8_find_iter(unchecked, self%handle, text, len(text, c_size_t), iter)
+    n = tally(iter, status)
+    call report(status, stat, message)
+  end function count_impl
 
   function count_utf16(self, text, stat, errmsg) result(n)
     class(regex_t), intent(in) :: self
@@ -1065,18 +1535,47 @@ contains
   !> $$ a dollar sign. A half character left by a match without u or v is written as U+FFFD.
   function replace_utf8(self, text, replacement, stat, errmsg) result(value)
     class(regex_t), intent(in) :: self
-    character(*), intent(in) :: text, replacement
+    character(*), intent(in) :: text
+    character(*), intent(in) :: replacement
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     character(:), allocatable :: value
     character(:), allocatable :: message
-    type(cre_str) :: out
-    call report(cre_regex_replace(self%handle, text, len(text, c_size_t), replacement, len(replacement, c_size_t), out), &
-                stat, message)
-    value = from_str(out)
-    call cre_string_free(out)
+    value = replace_impl(self, text, .false., replacement, stat, message)
     if (present(errmsg)) errmsg = message
   end function replace_utf8
+
+  function replace_text(self, text, replacement, stat, errmsg) result(value)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    character(*), intent(in) :: replacement
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    character(:), allocatable :: value
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      value = replace_impl(self, text%value, .true., replacement, stat, message)
+    else
+      value = replace_impl(self, "", .true., replacement, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function replace_text
+
+  function replace_impl(self, text, unchecked, replacement, stat, message) result(value)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    character(*), intent(in) :: replacement
+    integer, intent(out), optional :: stat
+    character(:), allocatable :: value
+    character(:), allocatable, intent(out) :: message
+    type(cre_str) :: out
+    call report(utf8_replace(unchecked, self%handle, text, len(text, c_size_t), replacement, len(replacement, c_size_t), &
+                             out), stat, message)
+    value = from_str(out)
+    call cre_string_free(out)
+  end function replace_impl
 
   function replace_utf16(self, text, replacement, stat, errmsg) result(value)
     class(regex_t), intent(in) :: self
@@ -1096,18 +1595,47 @@ contains
   !> The text with every match replaced (String.prototype.replaceAll), whether or not the pattern has the g flag.
   function replace_all_utf8(self, text, replacement, stat, errmsg) result(value)
     class(regex_t), intent(in) :: self
-    character(*), intent(in) :: text, replacement
+    character(*), intent(in) :: text
+    character(*), intent(in) :: replacement
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     character(:), allocatable :: value
     character(:), allocatable :: message
+    value = replace_all_impl(self, text, .false., replacement, stat, message)
+    if (present(errmsg)) errmsg = message
+  end function replace_all_utf8
+
+  function replace_all_text(self, text, replacement, stat, errmsg) result(value)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    character(*), intent(in) :: replacement
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    character(:), allocatable :: value
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      value = replace_all_impl(self, text%value, .true., replacement, stat, message)
+    else
+      value = replace_all_impl(self, "", .true., replacement, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end function replace_all_text
+
+  function replace_all_impl(self, text, unchecked, replacement, stat, message) result(value)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    character(*), intent(in) :: replacement
+    integer, intent(out), optional :: stat
+    character(:), allocatable :: value
+    character(:), allocatable, intent(out) :: message
     type(cre_str) :: out
-    call report(cre_regex_replace_all(self%handle, text, len(text, c_size_t), replacement, &
+    call report(utf8_replace_all(unchecked, self%handle, text, len(text, c_size_t), replacement, &
                                       len(replacement, c_size_t), out), stat, message)
     value = from_str(out)
     call cre_string_free(out)
-    if (present(errmsg)) errmsg = message
-  end function replace_all_utf8
+  end function replace_all_impl
 
   function replace_all_utf16(self, text, replacement, stat, errmsg) result(value)
     class(regex_t), intent(in) :: self
@@ -1135,13 +1663,42 @@ contains
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     character(:), allocatable :: message
+    call split_impl(self, text, .false., pieces, limit, stat, message)
+    if (present(errmsg)) errmsg = message
+  end subroutine split_utf8
+
+  subroutine split_text(self, text, pieces, limit, stat, errmsg)
+    class(regex_t), intent(in) :: self
+    type(utf8_text_t), intent(in) :: text
+    type(piece_t), allocatable, intent(out) :: pieces(:)
+    integer, intent(in), optional :: limit
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out), optional :: errmsg
+    character(:), allocatable :: message
+    ! One never assigned from utf8_text holds no text: it is searched as an empty one.
+    if (allocated(text%value)) then
+      call split_impl(self, text%value, .true., pieces, limit, stat, message)
+    else
+      call split_impl(self, "", .true., pieces, limit, stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end subroutine split_text
+
+  subroutine split_impl(self, text, unchecked, pieces, limit, stat, message)
+    class(regex_t), intent(in) :: self
+    character(*), intent(in) :: text
+    logical, intent(in) :: unchecked
+    type(piece_t), allocatable, intent(out) :: pieces(:)
+    integer, intent(in), optional :: limit
+    integer, intent(out), optional :: stat
+    character(:), allocatable, intent(out) :: message
     type(cre_pieces) :: out
     type(cre_str), pointer :: items(:)
     integer(c_int32_t) :: most
     integer(int64) :: i
     most = split_all
     if (present(limit)) most = int(max(limit, 0), c_int32_t)
-    call report(cre_regex_split(self%handle, text, len(text, c_size_t), most, out), stat, message)
+    call report(utf8_split(unchecked, self%handle, text, len(text, c_size_t), most, out), stat, message)
     allocate (pieces(out%len))
     if (out%len > 0) then
       call c_f_pointer(out%items, items, [out%len])
@@ -1151,8 +1708,7 @@ contains
       end do
     end if
     call cre_pieces_free(out)
-    if (present(errmsg)) errmsg = message
-  end subroutine split_utf8
+  end subroutine split_impl
 
   subroutine split_utf16(self, text, pieces, limit, stat, errmsg)
     class(regex_t), intent(in) :: self
