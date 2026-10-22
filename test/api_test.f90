@@ -1,5 +1,6 @@
 ! The binding's API against the answers V8 gives: compiling, testing, finding, captures by number and by name, the
-! global search, counting, replacing and splitting, over UTF-8 and UTF-16, the half characters of a match without u
+! global search, counting, replacing and splitting, over UTF-8 (as characters and as a utf8_text_t checked once) and
+! UTF-16, the half characters of a match without u
 ! or v, and the failures reported through stat; and classes nested as deep as allowed, on a small stack.
 program api_test
   use, intrinsic :: iso_fortran_env, only: int16, int64, real64, error_unit
@@ -23,6 +24,7 @@ program api_test
   call searching()
   call replacing()
   call splitting()
+  call checked_texts()
   call utf16()
   call half_characters()
   call limits()
@@ -82,7 +84,7 @@ contains
     call re%compile(repeat("(", 1001) // repeat(")", 1001), stat=stat)
     call check(stat == CRE_PATTERN_TOO_LARGE, "too large")
     call check(len(library_version()) >= 5, "library version")
-    call check(binding_version == "0.1.2", "binding version")
+    call check(binding_version == "0.1.3", "binding version")
   end subroutine compiling
 
   subroutine testing()
@@ -185,6 +187,51 @@ contains
     call re%split("", pieces)
     call check(size(pieces) == 1 .and. pieces(1)%defined .and. len(pieces(1)%value) == 0, "empty text")
   end subroutine splitting
+
+  ! Each method over a utf8_text_t finds what it finds over the same characters, and utf8_text refuses text that is not
+  ! UTF-8, where it stops being UTF-8.
+  subroutine checked_texts()
+    type(regex_t) :: re, digits
+    type(utf8_text_t) :: t, never
+    type(match_t) :: m, m2
+    type(match_t), allocatable :: all(:), all2(:), groups(:, :), groups2(:, :)
+    type(captures_t) :: caps, caps2
+    type(piece_t), allocatable :: pieces(:), pieces2(:)
+    character(*), parameter :: text = "on 2026-10 and 2027-01, 😀 ok"
+    character(:), allocatable :: message
+    integer :: stat
+    t = utf8_text(text)
+    call re%compile("(?<y>\d{4})-(?<m>\d{2})", "gu")
+    call check(re%test(t) .eqv. re%test(text), "test")
+    call check(re%test(t, start=10_int64) .eqv. re%test(text, start=10_int64), "test from start")
+    call check(re%test(t, timeout=1.0_real64) .eqv. re%test(text, timeout=1.0_real64), "test with a timeout")
+    call check(re%find(t, m, start=5_int64) .and. re%find(text, m2, start=5_int64), "find")
+    call check(m%start == m2%start .and. m%end == m2%end, "find where")
+    call check(re%exec(t, caps) .and. re%exec(text, caps2), "exec")
+    m = caps%named("m")
+    m2 = caps2%named("m")
+    call check(m%start == m2%start .and. m%end == m2%end, "exec named")
+    call re%find_all(t, all)
+    call re%find_all(text, all2)
+    call check(size(all) == 2 .and. size(all2) == 2 .and. all(2)%start == all2(2)%start, "find_all")
+    call re%exec_all(t, groups)
+    call re%exec_all(text, groups2)
+    call check(size(groups, 1) == size(groups2, 1) .and. size(groups, 2) == size(groups2, 2) .and. &
+               groups(2, 2)%start == groups2(2, 2)%start, "exec_all")
+    call check(re%count(t) == re%count(text) .and. re%count(t) == 2, "count")
+    call check(re%replace(t, "$<m>/$1") == re%replace(text, "$<m>/$1"), "replace")
+    call check(re%replace_all(t, "[$&]") == re%replace_all(text, "[$&]"), "replace_all")
+    call digits%compile("\s*,\s*")
+    call digits%split(t, pieces)
+    call digits%split(text, pieces2)
+    call check(size(pieces) == 2 .and. size(pieces2) == 2 .and. pieces(2)%value == pieces2(2)%value, "split")
+    ! Text that is not UTF-8 is refused where it stops being UTF-8, and the result holds an empty text.
+    t = utf8_text("ab" // char(226) // char(130) // "c", stat=stat, errmsg=message)
+    call check(stat == CRE_INVALID_UTF8 .and. last_error_offset() == 2 .and. len(message) > 0, "not UTF-8")
+    call check(re%count(t) == 0, "the refused text is empty")
+    ! One never assigned from utf8_text is searched as an empty text.
+    call check(.not. re%test(never) .and. re%count(never) == 0, "never assigned")
+  end subroutine checked_texts
 
   subroutine utf16()
     type(regex_t) :: re

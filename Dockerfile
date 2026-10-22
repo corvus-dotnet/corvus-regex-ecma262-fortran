@@ -18,8 +18,8 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 RUN curl -fsSL -o /usr/local/bin/fpm https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0-linux-x86_64-gcc-12 \
     && chmod +x /usr/local/bin/fpm
 # The C library: the release's archive for x86_64 Linux, checked against its hash.
-ARG CRE_VERSION=0.1.2
-ARG CRE_SHA256=0c4d496a8277c87a7d5e642e8f466a43a1a402977a76258cafd2e58222379246
+ARG CRE_VERSION=0.1.3
+ARG CRE_SHA256=3d9bae45a3bccbc1121ea0707eb59f08b545aac589e557c767163336a05b3c56
 RUN curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
     && echo "${CRE_SHA256}  /tmp/cre.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/cre && tar -xzf /tmp/cre.tar.gz -C /tmp/cre --strip-components 1 \
