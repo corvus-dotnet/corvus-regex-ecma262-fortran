@@ -12,9 +12,10 @@
 ! invalid one, and a match that reaches its limit are counted apart and listed too. captures.jsonl is judged on exec,
 ! the global search, the sticky flag, replace and split. A match is given 2 seconds.
 !
-! The records are read by tools/jsonlite, which decodes a lone surrogate as a code point of Plane 15's private use area
-! (U+F0000 + its offset from U+D800) and a NUL as U+F0800; each is turned back into its code unit (or byte) wherever the
-! text is used, and a lone surrogate in a pattern is read as U+FFFD, as the C library's runner reads it.
+! The records are read by tools/jsonlite, which decodes a lone surrogate as a number past the last code point of
+! Unicode (0x110000 + its offset from U+D800) and a NUL as 0x110800, so that none is taken for a character of the text
+! (test262's texts hold U+F0000); each is turned back into its code unit (or byte) wherever the text is used, and a
+! lone surrogate in a pattern is read as U+FFFD, as the C library's runner reads it.
 program dataset
   use, intrinsic :: iso_fortran_env, only: int16, int64, real64, error_unit, output_unit
   use jsonlite, only: node_t, parse, member, item, size_of, json_null, json_array, json_object, json_logical, &
@@ -67,9 +68,10 @@ contains
       r0 = right; w0 = wrong; f0 = refused; a0 = accepted; l0 = limited
       call judge_file(data // "/" // name, name)
       call system_clock(t1)
-      write (output_unit, "(a24, ' right ', i10, '  wrong ', i6, '  refused-valid ', i4, '  accepted-invalid ', i4, " // &
-             "'  limit ', i4, '  ', f6.1, 's')") name, right - r0, wrong - w0, refused - f0, accepted - a0, &
-             limited - l0, real(t1 - t0) / real(rate)
+      ! The name in 24 columns, on the left, as the Rust runner writes it, and in full when it is longer.
+      write (output_unit, "(a, ' right ', i10, '  wrong ', i6, '  refused-valid ', i4, '  accepted-invalid ', i4, " // &
+             "'  limit ', i4, '  ', f6.1, 's')") name // repeat(" ", max(0, 24 - len(name))), right - r0, wrong - w0, &
+             refused - f0, accepted - a0, limited - l0, real(t1 - t0) / real(rate)
       flush (output_unit)
     end do
     call sort_lines(wrongs(1:nwrong))
@@ -213,11 +215,12 @@ contains
     is_lone = cp >= lone_first .and. cp <= lone_last
   end function is_lone
 
-  ! Whether a text holds a lone surrogate (Plane 15's code points all start with the byte F3).
+  ! Whether a text holds a lone surrogate (written as UTF-8 writes 0x110000 and on, from the byte F4, which Plane 16's
+  ! code points start with too).
   logical function lone(s)
     character(*), intent(in) :: s
     lone = .false.
-    if (index(s, achar(243)) == 0) return
+    if (index(s, achar(244)) == 0) return
     lone = any(is_lone(code_points(s)))
   end function lone
 
@@ -281,7 +284,7 @@ contains
     character(:), allocatable :: out
     integer, allocatable :: cps(:)
     integer :: i
-    if (index(s, achar(243)) == 0) then
+    if (index(s, achar(244)) == 0) then
       out = s
       return
     end if

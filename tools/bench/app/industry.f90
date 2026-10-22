@@ -654,7 +654,7 @@ contains
       '","image":"' // json_escape(trim(environment("ImageOS", "") // " " // environment("ImageVersion", ""))) // &
       '","corvus-regex-ecma262":"' // library_version() // &
       '","binding":"' // binding_version // &
-      '","posix":"' // json_escape(first_line("ldd --version | head -1")) // &
+      '","posix":"' // json_escape(first_line("getconf GNU_LIBC_VERSION | cut -d' ' -f2")) // &
       '","fortran-regex":"' // fortran_regex_version // &
       '","rounds":"' // int_text(int(rounds, int64)) // '","protocol":"interleaved","spread_limit":"' // &
       real_text(limit) // '","spread_over":"' // json_escape(trim(adjustl(over))) // &

@@ -1,8 +1,9 @@
 !> A small JSON reader for this repository's tools: the test data's records and the benchmark's workloads and figures.
 !> It reads a whole text into a tree of node_t, decoding every string's escapes to UTF-8 as it goes. A lone surrogate
-!> escape is decoded as a code point of Plane 15's private use area (U+F0000 + its offset from U+D800) and a NUL escape
-!> as U+F0800, which the test data does not use, so that a string that holds either is known (json-fortran, with its
-!> default character kind, keeps \u escapes as they are and cannot tell \\u0041 from A once read).
+!> escape is decoded as a number past the last code point of Unicode (0x110000 + its offset from U+D800) and a NUL
+!> escape as 0x110800, each written as UTF-8 writes a code point there, so that a string that holds either is known and
+!> no character of the text is taken for one (json-fortran, with its default character kind, keeps \u escapes as they
+!> are and cannot tell \\u0041 from A once read).
 module jsonlite
   use, intrinsic :: iso_fortran_env, only: int64, real64
   implicit none
@@ -12,7 +13,7 @@ module jsonlite
 
   integer, parameter, public :: json_null = 0, json_logical = 1, json_number = 2, json_string = 3, json_array = 4, &
                                 json_object = 5
-  integer, parameter, public :: lone_first = int(z'F0000'), lone_last = int(z'F07FF'), nul_mark = int(z'F0800')
+  integer, parameter, public :: lone_first = int(z'110000'), lone_last = int(z'1107FF'), nul_mark = int(z'110800')
 
   !> A JSON value: its kind, and for a logical b, a number x (and i, when whole), a string s; an array's or an object's
   !> items, an object's with their names in key.
@@ -221,8 +222,8 @@ contains
     n%i = nint(n%x, int64)
   end subroutine number
 
-  ! A string, from its opening quotation mark, decoded: a lone surrogate as U+F0000 + its offset from U+D800, a NUL as
-  ! U+F0800.
+  ! A string, from its opening quotation mark, decoded: a lone surrogate as 0x110000 + its offset from U+D800, a NUL as
+  ! 0x110800.
   subroutine string(text, at, s, ok)
     character(*), intent(in) :: text
     integer, intent(inout) :: at
