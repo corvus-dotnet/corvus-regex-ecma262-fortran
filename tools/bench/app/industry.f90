@@ -501,6 +501,8 @@ contains
     real(real64), allocatable :: each(:, :, :)
     integer, allocatable :: nfig(:, :)
     integer(int64), allocatable :: counts(:, :)
+    ! V8's count of each workload as the workloads carry it (v8Count, from the central run), or -1, for a run without V8.
+    integer(int64), allocatable :: v8_counts(:)
     type(string_t), allocatable :: errors(:, :)
     integer :: rounds, nw, ne, k, c, rnd, turn, ei, i, u
     real(real64) :: limit, m, spread, x
@@ -538,7 +540,7 @@ contains
     ne = size(engines)
     call parse(read_file(path), workloads, found)
     nw = size_of(workloads)
-    allocate (ids(nw), chosen(0))
+    allocate (ids(nw), chosen(0), v8_counts(nw))
     ! The texts unzipped once, for every child.
     texts = environment("CORVUS_REGEX_TEXTS", environment("HOME", ".") // "/.local/share/corvus-regex-benchmarks")
     plain = first_line("mktemp -d")
@@ -547,6 +549,11 @@ contains
       id = string_of(w, "id")
       ids(k)%s = id
       file = string_of(w, "file")
+      v8_counts(k) = -1
+      p => member(w, "v8Count")
+      if (associated(p)) then
+        if (p%kind == json_number) v8_counts(k) = p%i
+      end if
       call execute_command_line("[ -f '" // plain // "/" // plain_name(file) // "' ] || gzip -dc '" // texts // "/" // &
                                 file // "' > '" // plain // "/" // plain_name(file) // "'")
       if (len(filter) == 0 .or. index(id, filter) > 0) chosen = [chosen, k]
@@ -622,7 +629,8 @@ contains
                   ',"max":' // real_text(maxval(each(1:rounds, ei, k))) // ',"count":' // int_text(n) // &
                   ',"rounds":' // int_text(int(rounds, int64)) // ',"spread":' // real_text(spread) // &
                   ',"each":[' // each_text // ']'
-          oracle = -1
+          ! Without V8 in the run (V8=0), its count as the workloads carry it.
+          oracle = v8_counts(k)
           do i = 1, ne
             if (engines(i)%s == "v8") oracle = counts(i, k)
           end do
