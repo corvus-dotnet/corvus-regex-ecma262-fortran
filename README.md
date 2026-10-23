@@ -136,7 +136,8 @@ nightly on one runner with every other Corvus ECMA-262 engine.
 
 A release is a GitHub release tagged `v<version>`, the version in `fpm.toml` (and in `binding_version`,
 `CMakeLists.txt` and the API test, which CI checks). An fpm project depends on the tag; the release publishes the
-harness image with the release's tag.
+harness image with the release's tag. Moving to another release of the C library changes `CRE_VERSION` in CI and in the
+Dockerfile, and the archive's SHA-256 (`CRE_SHA256`) in the Dockerfile.
 
 ## Licence
 
