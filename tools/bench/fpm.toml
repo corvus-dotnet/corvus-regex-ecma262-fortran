@@ -1,6 +1,6 @@
 # The Industry benchmark harness for this binding (see app/industry.f90).
 name = "industry"
-version = "0.2.0"
+version = "0.2.1"
 
 [build]
 link = ["corvus_regex_ecma262"]

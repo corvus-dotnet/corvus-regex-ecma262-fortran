@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  CRE_VERSION: 0.2.0
+  CRE_VERSION: 0.2.1
 
 jobs:
   test:

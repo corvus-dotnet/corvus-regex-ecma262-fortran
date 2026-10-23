@@ -1,6 +1,6 @@
 # A small JSON reader for this repository's tools (see src/jsonlite.f90).
 name = "jsonlite"
-version = "0.2.0"
+version = "0.2.1"
 
 [fortran]
 implicit-typing = false
