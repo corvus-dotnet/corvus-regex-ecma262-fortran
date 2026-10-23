@@ -24,7 +24,7 @@ module corvus_regex_ecma262
   public :: set_default_match_timeout, default_match_timeout
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.2.0"
+  character(*), parameter, public :: binding_version = "0.2.1"
 
   ! The outcome of a call (cre_status).
   integer, parameter, public :: CRE_OK = 0
@@ -636,7 +636,7 @@ module corvus_regex_ecma262
 
 contains
 
-  !> The C library's version, such as "0.2.0".
+  !> The C library's version, such as "0.2.1".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())
