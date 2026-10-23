@@ -10,7 +10,9 @@
 ! (positions in bytes); a text with a lone surrogate has no UTF-8 form and is matched as UTF-16 alone. Records marked
 ! v8_deviation are left out. Any difference from V8 is a wrong answer; a refusal of a valid pattern, an acceptance of an
 ! invalid one, and a match that reaches its limit are counted apart and listed too. captures.jsonl is judged on exec,
-! the global search, the sticky flag, replace and split. A match is given 2 seconds.
+! the global search, the sticky flag, replace and split. A match is given 2 seconds. ill-formed-utf8.jsonl holds bytes
+! that are not UTF-8, each one answer over UTF-8 under each grammar the pattern is valid in, whose right answer is a
+! refusal: CRE_INVALID_UTF8.
 !
 ! The records are read by tools/jsonlite, which decodes a lone surrogate as a number past the last code point of
 ! Unicode (0x110000 + its offset from U+D800) and a NUL as 0x110800, so that none is taken for a character of the text
@@ -149,6 +151,8 @@ contains
     if (p%kind /= json_string) return
     if (name == "captures.jsonl") then
       call judge_captures(r, p%s)
+    else if (name == "ill-formed-utf8.jsonl") then
+      call judge_ill_formed(r, p%s)
     else
       call judge_tests(r, p%s, name)
     end if
@@ -448,6 +452,71 @@ contains
       end do
     end do
   end subroutine judge_tests
+
+  ! A record of ill-formed-utf8.jsonl: under each grammar the pattern is valid in, each test's bytes (in hexadecimal)
+  ! are one answer over UTF-8, and the right one is CRE_INVALID_UTF8.
+  subroutine judge_ill_formed(r, pattern)
+    type(node_t), intent(in), target :: r
+    character(*), intent(in) :: pattern
+    character(*), parameter :: name = "ill-formed-utf8.jsonl"
+    character(:), allocatable :: flags, head, mode_flags, message, bytes
+    character(12) :: answers(3)
+    character(1) :: suffixes(3)
+    type(node_t), pointer :: tests, hex
+    type(regex_t) :: re
+    logical :: found, valid, got
+    integer :: m, nmodes, i, k, stat, byte
+    flags = text_of(r, "flags", found)
+    suffixes = ["u", " ", "v"]
+    answers = [character(12) :: "unicode", "legacy", "unicode_sets"]
+    nmodes = merge(3, 2, associated(member(r, "valid.unicode_sets")))
+    tests => member(r, "tests")
+    do m = 1, nmodes
+      mode_flags = flags // trim(suffixes(m))
+      valid = flag_of(r, "valid." // trim(answers(m)))
+      head = name // achar(9) // "/" // shown(pattern) // "/" // mode_flags
+      call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message)
+      if (stat /= CRE_OK) then
+        if (stat /= CRE_INVALID_PATTERN .and. stat /= CRE_PATTERN_TOO_LARGE) errors = errors + 1
+        if (valid) then
+          refused = refused + 1
+          call note("REFUSED" // achar(9) // head // achar(9) // message)
+        end if
+        cycle
+      end if
+      if (.not. valid) then
+        accepted = accepted + 1
+        call note("ACCEPTED-INVALID" // achar(9) // head)
+        cycle
+      end if
+      if (.not. associated(tests)) cycle
+      do i = 1, size_of(tests)
+        hex => member(item(tests, i), "bytes")
+        if (.not. associated(hex)) cycle
+        if (hex%kind /= json_string) cycle
+        allocate (character(len(hex%s) / 2) :: bytes)
+        do k = 1, len(bytes)
+          read (hex%s(2 * k - 1:2 * k), "(z2)") byte
+          bytes(k:k) = achar(byte)
+        end do
+        got = re%test(bytes, timeout=limit, stat=stat, errmsg=message)
+        deallocate (bytes)
+        if (stat == CRE_INVALID_UTF8) then
+          right = right + 1
+        else if (stat == CRE_MATCH_LIMIT) then
+          limited = limited + 1
+          call note("LIMIT" // achar(9) // head // achar(9) // hex%s // achar(9) // "utf8")
+        else if (stat /= CRE_OK) then
+          errors = errors + 1
+          call note("ERROR" // achar(9) // head // achar(9) // hex%s // achar(9) // "utf8" // achar(9) // message)
+        else
+          wrong = wrong + 1
+          call note("WRONG" // achar(9) // head // achar(9) // hex%s // achar(9) // "utf8" // achar(9) // &
+                    "read as UTF-8 (" // merge("true ", "false", got) // "), not refused")
+        end if
+      end do
+    end do
+  end subroutine judge_ill_formed
 
   subroutine ask_test(re, head, text, enc, expected)
     type(regex_t), intent(in) :: re

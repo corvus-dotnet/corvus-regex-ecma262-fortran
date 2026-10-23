@@ -17,9 +17,10 @@ library, as an fpm package and a CMake package, for gfortran 11 and later and In
   memory too, so with a timeout neither a pattern nor a text from outside can make a program hang.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
-about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among
-them), through this binding over UTF-16 and UTF-8, it gives 26,950,829 right answers and none wrong, refuses no valid
-pattern, accepts no invalid one and reaches no limit. CI runs the whole data.
+about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among them,
+and texts of bytes that are not UTF-8, which it refuses), through this binding over UTF-16 and UTF-8, it gives
+26,953,709 right answers and none wrong, refuses no valid pattern, accepts no invalid one and reaches no limit. CI runs
+the whole data.
 
 ## Install
 
