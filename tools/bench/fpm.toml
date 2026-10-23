@@ -13,7 +13,8 @@ implicit-external = false
 [dependencies]
 corvus-regex-ecma262 = { path = "../.." }
 jsonlite = { path = "../jsonlite" }
-fortran-regex = { git = "https://github.com/perazz/fortran-regex", tag = "1.1.2" }
+# fortran-regex 1.1.2, pinned to the commit of its tag so that the tag cannot move under the harness.
+fortran-regex = { git = "https://github.com/perazz/fortran-regex", rev = "83a409ca9443990759395731732733ded013e1f3" }
 
 [[executable]]
 name = "industry"
