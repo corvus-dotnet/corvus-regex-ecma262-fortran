@@ -9,9 +9,9 @@
 ! each round, so that a workload's rounds are seconds apart, as its engines are. Each figure is a child process of its
 ! own (`industry --one`, or `node industry.mjs --one` for V8), which warms for two fifths of its seconds, then times
 ! `passes` passes of as many counts as fit the rest and reports their median. A workload's figure for an engine is the
-! median of its rounds, with the fastest and the slowest round as its spread; a figure whose spread, (slowest -
-! fastest) / median, is over --spread is listed in the run's facts (spread_over) and on stderr. A child that does not
-! finish in two minutes is stopped and recorded as such.
+! median of its rounds, with the fastest and the slowest round as its spread; a figure whose spread, (slowest - fastest)
+! / median, is over --spread is listed in the run's facts (spread_over) and on stderr. A figure that does not finish in
+! 30 s is stopped and recorded as giving no result within 30 s, and is not run in the workload's later rounds.
 !
 ! The engines, each counting every match of a global search as a Fortran program would:
 ! - corvus-utf8 and corvus-utf16: this binding with the workload's flags and u, over the text as a utf8_text_t (UTF-8,
@@ -38,6 +38,9 @@ program industry
   integer(c_int), parameter :: reg_extended = 1, reg_icase = 2, reg_newline = 4, reg_notbol = 1
   ! The release of fortran-regex fpm.toml pins.
   character(*), parameter :: fortran_regex_version = "1.1.2"
+  ! A figure stopped at the limit, which the page shows as giving no result within 30 s.
+  character(*), parameter :: stopped_message = "did not produce a result within 30 s"
+  character(*), parameter :: stopped = '{"error":"' // stopped_message // '","limit":30}'
 
   type, bind(c) :: regmatch_t
     integer(c_int) :: rm_so, rm_eo
@@ -418,7 +421,7 @@ contains
     if (p%kind == json_string) s = p%s
   end function string_of
 
-  ! One figure in a child process: the child's line of JSON, parsed, or one with the error.
+  ! One figure in a child process: the child's line of JSON, parsed, or one with the error (stopped, at the limit).
   subroutine figure(self_path, v8, path, index_, engine, seconds, passes, line)
     character(*), intent(in) :: self_path, v8, path, engine, seconds, passes
     integer, intent(in) :: index_
@@ -430,14 +433,14 @@ contains
     write (k, "(i0)") index_
     out = environment("TMPDIR", "/tmp") // "/industry-fortran-figure.txt"
     if (engine == "v8") then
-      command = "timeout 120 node '" // v8 // "' --one '" // path // "' " // trim(k) // " " // seconds // " " // passes
+      command = "timeout 30 node '" // v8 // "' --one '" // path // "' " // trim(k) // " " // seconds // " " // passes
     else
-      command = "timeout 120 '" // self_path // "' --one '" // path // "' " // trim(k) // " " // engine // " " // &
+      command = "timeout 30 '" // self_path // "' --one '" // path // "' " // trim(k) // " " // engine // " " // &
                 seconds // " " // passes
     end if
     call execute_command_line(command // " > " // out // " 2>/dev/null", exitstat=status)
     if (status == 124) then
-      call parse('{"error":"did not finish in two minutes"}', line, ok)
+      call parse(stopped, line, ok)
       return
     end if
     text = read_file(out)
@@ -575,6 +578,8 @@ contains
         do turn = 0, ne - 1
           ei = mod(turn + rnd, ne) + 1
           e = engines(ei)%s
+          ! A figure stopped at the limit in an earlier round is not run again.
+          if (errors(ei, k)%s == stopped_message) cycle
           call figure(self_path, v8, path, k - 1, e, seconds, passes, line)
           p => member(line, "median")
           have = associated(p)
@@ -611,7 +616,11 @@ contains
         wid = json_escape(ids(k)%s)
         if (nfig(ei, k) < rounds) then
           if (len(errors(ei, k)%s) == 0) errors(ei, k)%s = "a round gave no figure"
-          entry = '{"error":"' // json_escape(errors(ei, k)%s) // '"}'
+          if (errors(ei, k)%s == stopped_message) then
+            entry = stopped
+          else
+            entry = '{"error":"' // json_escape(errors(ei, k)%s) // '"}'
+          end if
         else
           m = median(each(1:rounds, ei, k))
           spread = 0
