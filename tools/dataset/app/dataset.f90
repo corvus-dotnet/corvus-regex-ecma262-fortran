@@ -613,7 +613,11 @@ contains
     n = 0
     judge_all = .false.
     do k = 1, size(found)
-      if (n >= total) exit
+      ! One match more than the data has: wrong, unless the data kept only the first twenty.
+      if (n >= total) then
+        judge_all = total == 20
+        return
+      end if
       if (all%items(n + 1)%kind /= json_array) return
       if (size_of(all%items(n + 1)) < 1) return
       if (.not. same_span(all%items(n + 1)%items(1), found(k), at)) return
@@ -699,7 +703,10 @@ contains
       total = size_of(all)
       n = 0
       do k = 1, size(groups, 2)
-        if (n >= total) exit
+        if (n >= total) then
+          ok = ok .and. total == 20
+          exit
+        end if
         if (.not. same_groups(item(all, n + 1), groups(:, k), .true.)) then
           ok = .false.
           exit
