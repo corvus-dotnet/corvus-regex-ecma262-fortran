@@ -9,13 +9,14 @@
 # at depth 1 inside the container unless its data/ directory is mounted at /data. JOB=short, SECONDS_EACH, PASSES,
 # CORES, SETTLE and RUN_URL pass through (see tools/bench/run.sh). The central benchmark site runs this image each
 # night; .github/workflows/harness-image.yml builds, smoke-runs and publishes it.
-FROM node:24.22.0-bookworm-slim AS node
+FROM node:24.22.0-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4 AS node
 
-FROM gcc:14
+FROM gcc:14@sha256:db19db55a3bd1f836212a76854c4f6c7c4ccb0c9a9426dbf542e3505bc8cdfec
 RUN apt-get update && apt-get install -y --no-install-recommends python3 git util-linux ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 RUN curl -fsSL -o /usr/local/bin/fpm https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0-linux-x86_64-gcc-12 \
+    && echo "2e50a8649ac4136b9cf6b63c5d1b01adf26c02eedc18f32e16261c0ce655d46d  /usr/local/bin/fpm" | sha256sum -c - \
     && chmod +x /usr/local/bin/fpm
 # The C library: the release's archive for x86_64 Linux, checked against its hash.
 ARG CRE_VERSION=0.2.1
