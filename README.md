@@ -123,7 +123,7 @@ compiled and may be used from any number of threads; assigning one to another co
 The Industry workloads of dotnet/performance, this binding against the C library's POSIX regex (through
 `ISO_C_BINDING`), fortran-regex and V8, are on the central page,
 [corvus-oss.org/corvus-regex-ecma262-benchmarks](https://corvus-oss.org/corvus-regex-ecma262-benchmarks/), measured
-nightly on one runner with every other Corvus ECMA-262 engine.
+nightly on one runner with the engines of every other source.
 
 ## Repository
 
