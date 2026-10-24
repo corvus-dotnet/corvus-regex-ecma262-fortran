@@ -2,7 +2,8 @@
 ! judged by the data's own rule ("How a runner judges an engine" in its README) exactly as the C library's runner judges
 ! it:
 !
-!   fpm run --profile release -- <data directory> <wrong-cases file> [--files <name>]     (from tools/dataset)
+!   fpm run --profile release -- <data directory> <wrong-cases file> [--files <name>] [--compliance <file>]
+!                                                                                     (from tools/dataset)
 !
 ! Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
 ! answers), the record's flags alone (the legacy answers) and, in the file that has them, the flags with v added (the
@@ -13,6 +14,15 @@
 ! the global search, the sticky flag, replace and split. A match is given 2 seconds. ill-formed-utf8.jsonl holds bytes
 ! that are not UTF-8, each one answer over UTF-8 under each grammar the pattern is valid in, whose right answer is a
 ! refusal: CRE_INVALID_UTF8.
+!
+! exec/test262.jsonl, the exec calls of test262 (in a directory of its own), is judged last: each call one exec with the
+! record's flags from its lastIndex, right when the positions of the match and of every group, the named groups and,
+! with g or y, the lastIndex after are V8's; one answer over UTF-16 and, when the text holds no lone surrogate and
+! lastIndex is not between the halves of a pair, one over UTF-8 with positions in bytes.
+!
+! With --compliance <file>, the engine's compliance object is written to the file, as the benchmark page reads it
+! (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it makes in
+! each encoding, and what it leaves out, which for this binding is nothing.
 !
 ! The records are read by tools/jsonlite, which decodes a lone surrogate as a number past the last code point of
 ! Unicode (0x110000 + its offset from U+D800) and a NUL as 0x110800, so that none is taken for a character of the text
@@ -27,6 +37,7 @@ program dataset
 
   real(real64), parameter :: limit = 2.0_real64
   character(*), parameter :: replacement = "<$&|$1|$2|$10|$<a>|$$|$`|$'>"
+  character(*), parameter :: exec_file = "exec/test262.jsonl"
 
   type :: line_t
     character(:), allocatable :: s
@@ -42,14 +53,16 @@ program dataset
 contains
 
   subroutine main()
-    character(:), allocatable :: data, out, only, name
-    character(4096) :: arg
+    character(:), allocatable :: data, out, only, name, compliance
+    character(4096) :: arg, flag
     type(line_t), allocatable :: files(:)
     integer :: i, u, nargs
+    logical :: exists
     integer(int64) :: t0, t1, rate, r0, w0, f0, a0, l0
     nargs = command_argument_count()
     if (nargs < 2) then
-      write (error_unit, "(a)") "usage: dataset <data directory> <wrong-cases file> [--files <name>]"
+      write (error_unit, "(a)") "usage: dataset <data directory> <wrong-cases file> [--files <name>] " // &
+                                "[--compliance <file>]"
       error stop 2
     end if
     call get_command_argument(1, arg)
@@ -57,12 +70,18 @@ contains
     call get_command_argument(2, arg)
     out = trim(arg)
     only = ""
-    if (nargs >= 4) then
-      call get_command_argument(4, arg)
-      only = trim(arg)
-    end if
+    compliance = ""
+    do i = 3, nargs - 1, 2
+      call get_command_argument(i, flag)
+      call get_command_argument(i + 1, arg)
+      if (flag == "--files") only = trim(arg)
+      if (flag == "--compliance") compliance = trim(arg)
+    end do
     allocate (wrongs(1024))
     files = list_files(data)
+    ! The exec calls of test262, in a directory of their own: with every file, or when they are the one asked for.
+    inquire (file=data // "/" // exec_file, exist=exists)
+    if (exists) files = [files, line_t(exec_file)]
     call system_clock(t0, rate)
     do i = 1, size(files)
       name = files(i)%s
@@ -82,6 +101,7 @@ contains
       write (u) wrongs(i)%s // achar(10)
     end do
     close (u)
+    if (len(compliance) > 0) call write_compliance(compliance)
     call system_clock(t1)
     write (output_unit, "(/, 'records ', i0, ' (skipped ', i0, ' deviations)  right ', i0, '  wrong ', i0, " // &
            "'  refused-valid ', i0, '  accepted-invalid ', i0, '  limit ', i0, '  errors ', i0, '  in ', f0.1, 's')") &
@@ -149,7 +169,9 @@ contains
     p => member(r, "pattern")
     if (.not. associated(p)) return
     if (p%kind /= json_string) return
-    if (name == "captures.jsonl") then
+    if (name == exec_file) then
+      call judge_exec(r, p%s)
+    else if (name == "captures.jsonl") then
       call judge_captures(r, p%s)
     else if (name == "ill-formed-utf8.jsonl") then
       call judge_ill_formed(r, p%s)
@@ -801,6 +823,171 @@ contains
       end do
     end do
   end subroutine judge_captures
+
+  ! A call's lastIndex. Past the end of the text exec gives null; test262 sets it as far as 2^53 - 1 and
+  ! Number.MAX_VALUE, so anything past the end reads as the text's length plus one (read from the number itself, which
+  ! no integer holds).
+  integer(int64) function last_index_of(t, length)
+    type(node_t), intent(in), target :: t
+    integer, intent(in) :: length
+    type(node_t), pointer :: p
+    p => member(t, "lastIndex")
+    last_index_of = 0
+    if (.not. associated(p)) return
+    if (p%x > real(length, real64)) then
+      last_index_of = length + 1
+    else
+      last_index_of = int(p%x, int64)
+    end if
+  end function last_index_of
+
+  ! Whether a position is between the halves of a surrogate pair, where UTF-8 has no position.
+  logical function inside_pair(u, at)
+    integer(int16), intent(in) :: u(:)
+    integer(int64), intent(in) :: at
+    inside_pair = .false.
+    if (at <= 0 .or. at >= size(u)) return
+    inside_pair = from16(u(at + 1)) >= int(z'DC00') .and. from16(u(at + 1)) <= int(z'DFFF') .and. &
+                  from16(u(at)) >= int(z'D800') .and. from16(u(at)) <= int(z'DBFF')
+  end function inside_pair
+
+  ! Whether a match is the call's answer: both null, or the same groups, the same named groups (present exactly when
+  ! the pattern has names) and, with g or y, a lastIndex after at the match's end; the answer's positions mapped by at
+  ! when it is given.
+  logical function same_exec(answer, re, caps, matched, carries, at)
+    type(node_t), intent(in), target :: answer
+    type(regex_t), intent(in) :: re
+    type(captures_t), intent(in) :: caps
+    logical, intent(in) :: matched, carries
+    integer(int64), intent(in), optional :: at(0:)
+    type(node_t), pointer :: captures, groups, last
+    integer :: k, n, names
+    integer(int64) :: e
+    type(match_t) :: whole
+    logical :: listed
+    same_exec = .false.
+    if (answer%kind == json_null .or. .not. matched) then
+      same_exec = answer%kind == json_null .and. .not. matched
+      return
+    end if
+    captures => member(answer, "captures")
+    if (.not. same_groups(captures, groups_of(caps, caps%count()), .true., at)) return
+    names = re%group_name_count()
+    groups => member(answer, "groups")
+    if (.not. associated(groups)) then
+      if (names /= 0) return
+    else
+      if (size_of(groups) /= names) return
+      do k = 1, size_of(groups)
+        listed = .false.
+        do n = 1, names
+          if (re%group_name(n) == groups%items(k)%key) listed = .true.
+        end do
+        if (.not. listed) return
+        if (.not. same_span(groups%items(k), caps%named(groups%items(k)%key), at)) return
+      end do
+    end if
+    if (carries) then
+      last => member(answer, "lastIndex")
+      if (.not. associated(last)) return
+      e = last%i
+      if (present(at)) e = at(e)
+      whole = caps%group(0)
+      if (whole%end /= e) return
+    end if
+    same_exec = .true.
+  end function same_exec
+
+  ! Counts one answer of a call.
+  subroutine count_exec(head, encoding, ok, stat, message)
+    character(*), intent(in) :: head, encoding, message
+    logical, intent(in) :: ok
+    integer, intent(in) :: stat
+    if (stat == CRE_MATCH_LIMIT) then
+      limited = limited + 1
+      call note("LIMIT" // achar(9) // exec_file // achar(9) // head // achar(9) // encoding)
+    else if (stat /= CRE_OK) then
+      errors = errors + 1
+      call note("ERROR" // achar(9) // exec_file // achar(9) // head // achar(9) // encoding // achar(9) // message)
+    else if (ok) then
+      right = right + 1
+    else
+      wrong = wrong + 1
+      call note("WRONG" // achar(9) // exec_file // achar(9) // head // achar(9) // encoding)
+    end if
+  end subroutine count_exec
+
+  ! A record of exec/test262.jsonl: the pattern with its own flags (g, y and d among them), from each call's lastIndex.
+  subroutine judge_exec(r, pattern)
+    type(node_t), intent(in), target :: r
+    character(*), intent(in) :: pattern
+    character(:), allocatable :: flags, head, message, utf8
+    type(node_t), pointer :: tests, test, text, answer, last
+    type(regex_t) :: re
+    type(captures_t) :: caps
+    integer(int16), allocatable :: u(:)
+    integer(int64), allocatable :: at(:)
+    integer(int64) :: start
+    character(32) :: shown_last
+    logical :: found, carries, matched
+    integer :: i, stat
+    flags = text_of(r, "flags", found)
+    call re%compile(lossy(pattern), flags, stat=stat, errmsg=message)
+    if (stat /= CRE_OK) then
+      refused = refused + 1
+      call note("REFUSED" // achar(9) // exec_file // achar(9) // "/" // shown(pattern) // "/" // flags // achar(9) // &
+                message)
+      return
+    end if
+    carries = index(flags, "g") > 0 .or. index(flags, "y") > 0
+    tests => member(r, "tests")
+    if (.not. associated(tests)) return
+    do i = 1, size_of(tests)
+      test => item(tests, i)
+      if (flag_of(test, "v8_deviation")) cycle
+      text => member(test, "text")
+      answer => member(test, "answer")
+      last => member(test, "lastIndex")
+      if (.not. associated(text) .or. .not. associated(answer) .or. .not. associated(last)) cycle
+      u = units(text%s)
+      start = 0
+      if (carries) start = last_index_of(test, size(u))
+      write (shown_last, "(g0)") last%x
+      head = "/" // shown(pattern) // "/" // flags // achar(9) // escape(text%s) // achar(9) // &
+             trim(adjustl(shown_last))
+      matched = .false.
+      stat = CRE_OK
+      message = ""
+      if (start <= size(u)) matched = re%exec(u, caps, start=start + 1, timeout=limit, stat=stat, errmsg=message)
+      call count_exec(head, "utf16", same_exec(answer, re, caps, matched, carries), stat, message)
+      if (lone(text%s) .or. inside_pair(u, start)) cycle
+      call byte_offsets(text%s, at)
+      utf8 = lossy(text%s)
+      matched = .false.
+      stat = CRE_OK
+      message = ""
+      if (start <= size(u)) matched = re%exec(utf8, caps, start=at(start) + 1, timeout=limit, stat=stat, errmsg=message)
+      call count_exec(head, "utf8", same_exec(answer, re, caps, matched, carries, at), stat, message)
+    end do
+  end subroutine judge_exec
+
+  ! Writes the engine's compliance as the benchmark page reads it: the counts, this runner and the calls it makes in
+  ! each encoding, and what it leaves out.
+  subroutine write_compliance(path)
+    character(*), intent(in) :: path
+    character(1024) :: counts
+    integer :: u
+    write (counts, "('{""right"":', i0, ',""wrong"":', i0, ',""refused"":', i0, ',""acceptedInvalid"":', i0, " // &
+           "',""limited"":', i0, ',')") right, wrong, refused, accepted, limited + errors
+    open (newunit=u, file=path, status="replace", action="write", access="stream", form="unformatted")
+    write (u) trim(counts) // '"judge":{"runner":"https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran/' // &
+      'blob/main/tools/dataset/app/dataset.f90","calls":{' // &
+      '"utf16":["regex_t%test(integer(int16))","regex_t%exec(integer(int16))","regex_t%exec_all(integer(int16))",' // &
+      '"regex_t%find_all(integer(int16))","regex_t%replace(integer(int16))","regex_t%split(integer(int16))"],' // &
+      '"utf8":["regex_t%test(character)","regex_t%exec(character)","regex_t%find_all(character)",' // &
+      '"regex_t%replace(character)"]}},"excludes":[]}' // achar(10)
+    close (u)
+  end subroutine write_compliance
 
   ! Sorts lines by their bytes (a merge sort).
   recursive subroutine sort_lines(lines)
