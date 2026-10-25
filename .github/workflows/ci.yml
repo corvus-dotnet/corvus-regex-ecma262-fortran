@@ -45,7 +45,9 @@ jobs:
           compiler: gcc
           version: '14'
           flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
-        - os: ubuntu-latest
+        # Ubuntu 24.04, not ubuntu-latest: fortran-lang/setup-fortran adds Intel's apt repository with apt-key, which
+        # Ubuntu 26.04 (ubuntu-latest since 25 October 2026) no longer has.
+        - os: ubuntu-24.04
           compiler: intel
           version: '2025.3'
           flags: -warn all -stand f18 -check all -g
