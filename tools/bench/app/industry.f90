@@ -648,11 +648,8 @@ contains
                      " vs V8 " // int_text(oracle)
             write (error_unit, "(a)") "COUNT  " // e // " " // ids(k)%s // " " // int_text(n) // " against V8's " // &
               int_text(oracle)
-            if (e == "posix" .or. e == "fortran-regex") then
-              entry = entry // ',"differs":"' // e // " " // int_text(n) // ", V8 " // int_text(oracle) // '"}'
-            else
-              entry = '{"error":"counted ' // int_text(n) // ' where V8 counts ' // int_text(oracle) // '"}'
-            end if
+            ! A count other than V8's is a wrong answer, whatever the engine's dialect: no figure.
+            entry = '{"error":"counted ' // int_text(n) // ' where V8 counts ' // int_text(oracle) // '"}'
           else
             entry = entry // "}"
           end if
