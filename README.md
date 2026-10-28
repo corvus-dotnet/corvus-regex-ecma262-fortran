@@ -160,7 +160,8 @@ nightly on one runner with the engines of every other source.
 A release is a GitHub release tagged `v<version>`, the version in `fpm.toml` (and in `binding_version`,
 `CMakeLists.txt` and the API test, which CI checks). An fpm project depends on the tag; the release publishes the
 harness image with the release's tag. Moving to another release of the C library changes `CRE_VERSION` in CI and in the
-Dockerfile, and the archive's SHA-256 (`CRE_SHA256`) in the Dockerfile.
+Dockerfile, and the SHA-256 of each architecture's archive (`CRE_SHA256_X86_64` and `CRE_SHA256_AARCH64`) in the
+Dockerfile.
 
 ## Licence
 
