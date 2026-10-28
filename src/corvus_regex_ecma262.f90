@@ -24,7 +24,28 @@ module corvus_regex_ecma262
   public :: set_default_match_timeout, default_match_timeout
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.2.1"
+  character(*), parameter, public :: binding_version = "0.2.3"
+
+  ! The edition of ECMA-262 whose grammar a pattern is read with (the C library's CRE_EDITION_): today's, the default,
+  ! or ECMAScript 2020's, which JSON Schema 2020-12 names. The 2020 grammar refuses what later editions added: the d
+  ! and v flags, modifier groups, a name given to more than one group, and property names not in its tables.
+  integer, parameter, public :: CRE_EDITION_CURRENT = 0
+  integer, parameter, public :: CRE_EDITION_ES2020 = 1
+
+  ! The version of Unicode whose tables a pattern is read with, independent of the edition (the C library's
+  ! CRE_UNICODE_): the default, which is the version of the V8 the answers are held to, 13, 17, 18, or the latest the
+  ! library carries.
+  integer, parameter, public :: CRE_UNICODE_DEFAULT = 0
+  integer, parameter, public :: CRE_UNICODE_13 = 13
+  integer, parameter, public :: CRE_UNICODE_17 = 17
+  integer, parameter, public :: CRE_UNICODE_18 = 18
+  integer, parameter, public :: CRE_UNICODE_LATEST = int(z'7FFFFFFF')
+
+  !> The versions of Unicode a pattern can be read with; the one CRE_UNICODE_DEFAULT stands for; and the one
+  !> CRE_UNICODE_LATEST stands for.
+  integer, parameter, public :: unicode_versions(3) = [13, 17, 18]
+  integer, parameter, public :: default_unicode_version = 17
+  integer, parameter, public :: latest_unicode_version = 18
 
   ! The outcome of a call (cre_status).
   integer, parameter, public :: CRE_OK = 0
@@ -96,6 +117,8 @@ module corvus_regex_ecma262
     procedure :: source => regex_source
     procedure :: flags => regex_flags
     procedure :: match_timeout => regex_match_timeout
+    procedure :: edition => regex_edition
+    procedure :: unicode_version => regex_unicode_version
     procedure :: group_count => regex_group_count
     procedure :: group_name_count => regex_group_name_count
     procedure :: group_name => regex_group_name
@@ -156,24 +179,6 @@ module corvus_regex_ecma262
       integer(c_size_t) :: offset
     end function cre_last_error_offset
 
-    function cre_regex_new(pattern, pattern_len, flags, flags_len, out) bind(c, name="cre_regex_new") result(status)
-      import :: c_char, c_size_t, c_ptr, c_int32_t
-      character(kind=c_char), intent(in) :: pattern(*), flags(*)
-      integer(c_size_t), value :: pattern_len, flags_len
-      type(c_ptr), intent(out) :: out
-      integer(c_int32_t) :: status
-    end function cre_regex_new
-
-    function cre_regex_new_with_timeout(pattern, pattern_len, flags, flags_len, timeout_ms, out) &
-        bind(c, name="cre_regex_new_with_timeout") result(status)
-      import :: c_char, c_size_t, c_ptr, c_int32_t, c_int64_t
-      character(kind=c_char), intent(in) :: pattern(*), flags(*)
-      integer(c_size_t), value :: pattern_len, flags_len
-      integer(c_int64_t), value :: timeout_ms
-      type(c_ptr), intent(out) :: out
-      integer(c_int32_t) :: status
-    end function cre_regex_new_with_timeout
-
     function cre_regex_match_timeout(regex) bind(c, name="cre_regex_match_timeout") result(ms)
       import :: c_ptr, c_int64_t
       type(c_ptr), value :: regex
@@ -190,19 +195,43 @@ module corvus_regex_ecma262
       integer(c_int64_t) :: ms
     end function cre_default_match_timeout
 
+    function cre_regex_new_with_options(pattern, pattern_len, flags, flags_len, timeout_ms, edition, unicode_version, &
+        out) bind(c, name="cre_regex_new_with_options") result(status)
+      import :: c_char, c_size_t, c_ptr, c_int32_t, c_int64_t
+      character(kind=c_char), intent(in) :: pattern(*), flags(*)
+      integer(c_size_t), value :: pattern_len, flags_len
+      integer(c_int64_t), value :: timeout_ms
+      integer(c_int32_t), value :: edition, unicode_version
+      type(c_ptr), intent(out) :: out
+      integer(c_int32_t) :: status
+    end function cre_regex_new_with_options
+
+    function cre_regex_edition(regex) bind(c, name="cre_regex_edition") result(edition)
+      import :: c_ptr, c_int32_t
+      type(c_ptr), value :: regex
+      integer(c_int32_t) :: edition
+    end function cre_regex_edition
+
+    function cre_regex_unicode_version(regex) bind(c, name="cre_regex_unicode_version") result(version)
+      import :: c_ptr, c_int32_t
+      type(c_ptr), value :: regex
+      integer(c_int32_t) :: version
+    end function cre_regex_unicode_version
+
     subroutine cre_regex_free(regex) bind(c, name="cre_regex_free")
       import :: c_ptr
       type(c_ptr), value :: regex
     end subroutine cre_regex_free
 
-    function cre_regex_is_valid(pattern, pattern_len, flags, flags_len, out) bind(c, name="cre_regex_is_valid") &
-        result(status)
+    function cre_regex_is_valid_with_options(pattern, pattern_len, flags, flags_len, edition, unicode_version, out) &
+        bind(c, name="cre_regex_is_valid_with_options") result(status)
       import :: c_char, c_size_t, c_bool, c_int32_t
       character(kind=c_char), intent(in) :: pattern(*), flags(*)
       integer(c_size_t), value :: pattern_len, flags_len
+      integer(c_int32_t), value :: edition, unicode_version
       logical(c_bool), intent(out) :: out
       integer(c_int32_t) :: status
-    end function cre_regex_is_valid
+    end function cre_regex_is_valid_with_options
 
     function cre_regex_source(regex) bind(c, name="cre_regex_source") result(text)
       import :: c_ptr, cre_str
@@ -636,7 +665,7 @@ module corvus_regex_ecma262
 
 contains
 
-  !> The C library's version, such as "0.2.1".
+  !> The C library's version, such as "0.2.3".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())
@@ -649,20 +678,32 @@ contains
     offset = int(cre_last_error_offset(), int64)
   end function last_error_offset
 
-  !> Whether a pattern is valid with the flags, without compiling it. A pattern over a limit of size is not valid here.
-  function is_valid(pattern, flags, stat, errmsg) result(valid)
+  !> Whether a pattern is valid with the flags, without compiling it, in the grammar of edition (a CRE_EDITION_ value,
+  !> CRE_EDITION_CURRENT without it) and under unicode_version (a CRE_UNICODE_ value, CRE_UNICODE_DEFAULT without it).
+  !> A pattern over a limit of size is not valid here. Another value of edition or unicode_version is
+  !> CRE_INVALID_ARGUMENT.
+  function is_valid(pattern, flags, stat, errmsg, edition, unicode_version) result(valid)
     character(*), intent(in) :: pattern
     character(*), intent(in), optional :: flags
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
+    integer, intent(in), optional :: edition, unicode_version
     logical :: valid
     character(:), allocatable :: message
     logical(c_bool) :: out
+    integer(c_int32_t) :: e, u
+    e = CRE_EDITION_CURRENT
+    if (present(edition)) e = int(edition, c_int32_t)
+    u = CRE_UNICODE_DEFAULT
+    if (present(unicode_version)) u = int(unicode_version, c_int32_t)
+    out = .false.
     ! The flags passed as they are (a deferred-length copy draws a false maybe-uninitialized warning from gfortran 11).
     if (present(flags)) then
-      call report(cre_regex_is_valid(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), out), stat, message)
+      call report(cre_regex_is_valid_with_options(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), e, u, &
+        out), stat, message)
     else
-      call report(cre_regex_is_valid(pattern, len(pattern, c_size_t), "", 0_c_size_t, out), stat, message)
+      call report(cre_regex_is_valid_with_options(pattern, len(pattern, c_size_t), "", 0_c_size_t, e, u, out), stat, &
+        message)
     end if
     valid = logical(out)
     if (present(errmsg)) errmsg = message
@@ -972,32 +1013,48 @@ contains
   !> not compiled. timeout is the time in seconds each match may take before it is abandoned with CRE_MATCH_LIMIT (0
   !> for none); without it the regular expression takes default_match_timeout(), which is none unless set. A timeout
   !> also caps the backtracking memory of a match; without one a match has no limit of time or of memory, so give a
-  !> pattern or a text from outside one.
-  subroutine regex_compile(self, pattern, flags, stat, errmsg, timeout)
+  !> pattern or a text from outside one. edition is the grammar the pattern is read with (a CRE_EDITION_ value,
+  !> CRE_EDITION_CURRENT without it), and unicode_version the version of Unicode whose tables it is read with (a
+  !> CRE_UNICODE_ value, CRE_UNICODE_DEFAULT without it); under CRE_EDITION_ES2020 the d and v flags are
+  !> CRE_INVALID_FLAGS, and another value of either is CRE_INVALID_ARGUMENT. With stat present a failure is not an
+  !> error stop, so compile with stat and a timeout is the form that checks a pattern without a default timeout.
+  subroutine regex_compile(self, pattern, flags, stat, errmsg, timeout, edition, unicode_version)
     class(regex_t), intent(inout) :: self
     character(*), intent(in) :: pattern
     character(*), intent(in), optional :: flags
     integer, intent(out), optional :: stat
     character(:), allocatable, intent(out), optional :: errmsg
     real(real64), intent(in), optional :: timeout
+    integer, intent(in), optional :: edition, unicode_version
     character(:), allocatable :: message
+    integer(c_int64_t) :: ms
+    integer(c_int32_t) :: e, u
+    ms = cre_default_match_timeout()
+    if (present(timeout)) ms = timeout_ms_of(timeout)
+    e = CRE_EDITION_CURRENT
+    if (present(edition)) e = int(edition, c_int32_t)
+    u = CRE_UNICODE_DEFAULT
+    if (present(unicode_version)) u = int(unicode_version, c_int32_t)
+    if (present(flags)) then
+      call report(compile_with(self, pattern, flags, ms, e, u), stat, message)
+    else
+      call report(compile_with(self, pattern, "", ms, e, u), stat, message)
+    end if
+    if (present(errmsg)) errmsg = message
+  end subroutine regex_compile
+
+  ! Compiles into self with every setting given, freeing what it held first: the status.
+  function compile_with(self, pattern, flags, ms, edition, unicode_version) result(status)
+    class(regex_t), intent(inout) :: self
+    character(*), intent(in) :: pattern, flags
+    integer(c_int64_t), intent(in) :: ms
+    integer(c_int32_t), intent(in) :: edition, unicode_version
     integer(c_int32_t) :: status
     call cre_regex_free(self%handle)
     self%handle = c_null_ptr
-    if (present(timeout) .and. present(flags)) then
-      status = cre_regex_new_with_timeout(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), &
-        timeout_ms_of(timeout), self%handle)
-    else if (present(timeout)) then
-      status = cre_regex_new_with_timeout(pattern, len(pattern, c_size_t), "", 0_c_size_t, timeout_ms_of(timeout), &
-        self%handle)
-    else if (present(flags)) then
-      status = cre_regex_new(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), self%handle)
-    else
-      status = cre_regex_new(pattern, len(pattern, c_size_t), "", 0_c_size_t, self%handle)
-    end if
-    call report(status, stat, message)
-    if (present(errmsg)) errmsg = message
-  end subroutine regex_compile
+    status = cre_regex_new_with_options(pattern, len(pattern, c_size_t), flags, len(flags, c_size_t), ms, edition, &
+      unicode_version, self%handle)
+  end function compile_with
 
   !> Whether the regular expression is compiled.
   logical function regex_is_compiled(self)
@@ -1011,6 +1068,18 @@ contains
     class(regex_t), intent(in) :: self
     regex_match_timeout = real(cre_regex_match_timeout(self%handle), real64) / 1000.0_real64
   end function regex_match_timeout
+
+  !> The edition whose grammar the pattern was read with, a CRE_EDITION_ value (CRE_EDITION_CURRENT when not compiled).
+  integer function regex_edition(self)
+    class(regex_t), intent(in) :: self
+    regex_edition = int(cre_regex_edition(self%handle))
+  end function regex_edition
+
+  !> The version of Unicode whose tables the pattern was read with, resolved: 13, 17 or 18 (0 when not compiled).
+  integer function regex_unicode_version(self)
+    class(regex_t), intent(in) :: self
+    regex_unicode_version = int(cre_regex_unicode_version(self%handle))
+  end function regex_unicode_version
 
   !> The source of the pattern, as it was given ("" when not compiled).
   function regex_source(self) result(text)
@@ -1804,17 +1873,23 @@ contains
     if (present(errmsg)) errmsg = message
   end subroutine split_utf16
 
-  ! Assignment compiles the same pattern again: a regex_t holds the C library's handle, which has no copy.
+  ! Assignment compiles the same pattern again, with the same timeout, edition and version of Unicode: a regex_t holds
+  ! the C library's handle, which has no copy.
   subroutine regex_assign(self, other)
     class(regex_t), intent(inout) :: self
     type(regex_t), intent(in) :: other
     character(:), allocatable :: message
-    integer :: stat
-    call cre_regex_free(self%handle)
-    self%handle = c_null_ptr
-    if (.not. c_associated(other%handle)) return
-    call self%compile(other%source(), other%flags(), stat)
-    if (stat /= CRE_OK) call report_misuse("a compiled pattern did not compile again", message=message)
+    ! a = a: the same handle, which is kept.
+    if (c_associated(self%handle) .and. c_associated(self%handle, other%handle)) return
+    if (.not. c_associated(other%handle)) then
+      call cre_regex_free(self%handle)
+      self%handle = c_null_ptr
+      return
+    end if
+    if (compile_with(self, other%source(), other%flags(), cre_regex_match_timeout(other%handle), &
+                     cre_regex_edition(other%handle), cre_regex_unicode_version(other%handle)) /= CRE_OK) then
+      call report_misuse("a compiled pattern did not compile again", message=message)
+    end if
   end subroutine regex_assign
 
   subroutine regex_final(self)

@@ -30,6 +30,7 @@ program api_test
   call limits()
   call timeouts()
   call copying()
+  call editions()
   call readme()
   call deep_classes()
 
@@ -85,7 +86,7 @@ contains
     call re%compile(repeat("(", 1001) // repeat(")", 1001), stat=stat)
     call check(stat == CRE_PATTERN_TOO_LARGE, "too large")
     call check(len(library_version()) >= 5, "library version")
-    call check(binding_version == "0.2.1", "binding version")
+    call check(binding_version == "0.2.3", "binding version")
   end subroutine compiling
 
   subroutine testing()
@@ -344,7 +345,143 @@ contains
     b = a
     call check(b%is_compiled() .and. b%source() == "x+" .and. b%flags() == "gi", "assignment compiles again")
     call check(b%count("xXx x") == 2, "the copy matches")
+    ! A copy keeps the pattern's timeout, edition and version of Unicode.
+    call a%compile("a", "u", timeout=5.0_real64, edition=CRE_EDITION_ES2020, unicode_version=CRE_UNICODE_13)
+    b = a
+    call check(abs(b%match_timeout() - 5.0_real64) < 1e-9_real64, "a copy keeps the timeout")
+    call check(b%edition() == CRE_EDITION_ES2020 .and. b%unicode_version() == 13, "a copy keeps the settings")
+    b = b
+    call check(b%is_compiled() .and. b%unicode_version() == 13, "a copy assigned to itself")
   end subroutine copying
+
+  ! The edition and the version of Unicode: each independent of the other, and resolved when the pattern is compiled.
+  subroutine editions()
+    character(*), parameter :: l10570 = char(240) // char(144) // char(149) // char(176)
+    character(*), parameter :: l10597 = char(240) // char(144) // char(150) // char(151)
+    character(*), parameter :: a7c0 = char(234) // char(159) // char(128), a7c1 = char(234) // char(159) // char(129)
+    integer(int16), parameter :: u10570(2) = [int(z'D801', int16), int(z'DD70', int16)]
+    integer(int16), parameter :: u10597(2) = [int(z'D801', int16), int(z'DD97', int16)]
+    integer(int16), parameter :: ua7c0(1) = [int(z'A7C0', int16)], ua7c1(1) = [int(z'A7C1', int16)]
+    character(*), parameter :: refused(8) = [character(32) :: "(?i:a)", "(?-i:a)", "(?s:.)", "(?<a>x)|(?<a>y)", &
+      "(?<a>x)|(?<a>y)", "\p{Script=Yezidi}", "\p{sc=Vith}", "\p{Script_Extensions=Toto}"]
+    character(*), parameter :: refused_flags(8) = [character(2) :: "", "i", "u", "", "u", "u", "u", "u"]
+    character(*), parameter :: accepted(7) = [character(32) :: "\p{Script=Greek}", "\p{L}\p{gc=Lu}\p{Lowercase}", &
+      "\P{scx=Latn}", "\p{Script=Yezidi}", "(?<a>x)(?<b>y)\k<a>", "(?<=a)(?<!b)", "(?:i)"]
+    character(*), parameter :: accepted_flags(7) = [character(2) :: "u", "u", "iu", "", "u", "s", ""]
+    character(*), parameter :: backrefs(3) = [character(16) :: "(.)\1", "(?<=\1(.))", "(?:x|(.))+\1$"]
+    character(*), parameter :: two_flags(4) = [character(2) :: "d", "v", "dv", "gv"]
+    type(regex_t) :: re
+    integer :: stat, i, k, v
+    character(:), allocatable :: text, twice, flags
+    integer(int16), allocatable :: text16(:)
+    call re%compile("a")
+    call check(re%edition() == CRE_EDITION_CURRENT .and. re%unicode_version() == 17, "the defaults")
+    call check(default_unicode_version == 17 .and. latest_unicode_version == 18, "the default and latest versions")
+    call check(all(unicode_versions == [13, 17, 18]), "the versions")
+    call re%compile("a", unicode_version=CRE_UNICODE_DEFAULT)
+    call check(re%unicode_version() == 17, "the default resolved")
+    call re%compile("a", unicode_version=CRE_UNICODE_13)
+    call check(re%unicode_version() == 13, "13 resolved")
+    call re%compile("a", unicode_version=CRE_UNICODE_17)
+    call check(re%unicode_version() == 17, "17 resolved")
+    call re%compile("a", unicode_version=CRE_UNICODE_18)
+    call check(re%unicode_version() == 18, "18 resolved")
+    call re%compile("a", unicode_version=CRE_UNICODE_LATEST)
+    call check(re%unicode_version() == latest_unicode_version, "the latest resolved")
+    call re%compile("a", stat=stat, unicode_version=12)
+    call check(stat == CRE_INVALID_ARGUMENT .and. .not. re%is_compiled(), "a version not carried")
+    call re%compile("a", stat=stat, edition=2)
+    call check(stat == CRE_INVALID_ARGUMENT, "an edition not known")
+    call check(.not. is_valid("a", stat=stat, unicode_version=19) .and. stat == CRE_INVALID_ARGUMENT, &
+      "a version not carried, is_valid")
+
+    ! Each version has its own scripts.
+    call check(.not. is_valid("\p{Script=Vithkuqi}", "u", unicode_version=CRE_UNICODE_13), "Vithkuqi under 13")
+    call check(is_valid("\p{Script=Vithkuqi}", "u"), "Vithkuqi by default")
+    call check(is_valid("\p{Script=Yezidi}", "u", unicode_version=CRE_UNICODE_13), "Yezidi under 13")
+    call check(.not. is_valid("\p{Script=Jurchen}", "u"), "Jurchen by default")
+    call check(is_valid("\p{scx=Jurc}", "u", unicode_version=CRE_UNICODE_18), "Jurchen under 18")
+    call check(is_valid("\p{Script=Jurchen}", "u", unicode_version=CRE_UNICODE_LATEST), "Jurchen under the latest")
+    call re%compile("\p{Script=Vithkuqi}", "u", stat=stat, unicode_version=CRE_UNICODE_13)
+    call check(stat == CRE_INVALID_PATTERN, "Vithkuqi under 13 refused")
+
+    ! A property and case folding are the version's.
+    call re%compile("^\p{Ll}$", "u")
+    call check(re%test(l10597), "Ll by default")
+    call re%compile("^\p{Ll}$", "u", unicode_version=CRE_UNICODE_13)
+    call check(.not. re%test(l10597), "Ll under 13")
+    call re%compile(l10570, "iu")
+    call check(re%test(l10597), "folding by default")
+    call re%compile(l10570, "iu", unicode_version=CRE_UNICODE_13)
+    call check(.not. re%test(l10597), "folding under 13")
+    call re%compile(a7c0, "i")
+    call check(re%test(a7c1), "simple folding by default")
+    call re%compile(a7c0, "i", unicode_version=CRE_UNICODE_13)
+    call check(.not. re%test(a7c1), "simple folding under 13")
+
+    ! A case-insensitive backreference folds as its version folds, over UTF-8 and UTF-16.
+    do k = 1, 2
+      if (k == 1) then
+        flags = "iu"
+        text = l10570 // l10597
+        twice = l10570 // l10570
+        text16 = [u10570, u10597]
+      else
+        flags = "i"
+        text = a7c0 // a7c1
+        twice = a7c0 // a7c0
+        text16 = [ua7c0, ua7c1]
+      end if
+      do i = 1, size(backrefs)
+        do v = 17, 18
+          call re%compile(trim(backrefs(i)), flags, unicode_version=v)
+          call check(re%test(text), trim(backrefs(i)) // " /" // flags // " folds")
+          call check(re%test(text16), trim(backrefs(i)) // " /" // flags // " folds over UTF-16")
+        end do
+        call re%compile(trim(backrefs(i)), flags, unicode_version=CRE_UNICODE_13)
+        call check(.not. re%test(text), trim(backrefs(i)) // " /" // flags // " under 13")
+        call check(.not. re%test(text16), trim(backrefs(i)) // " /" // flags // " under 13 over UTF-16")
+        call check(re%test(twice), trim(backrefs(i)) // " /" // flags // " under 13, the same letter twice")
+      end do
+    end do
+
+    ! The grammar of 2020 refuses what later editions added, and accepts what it had.
+    do i = 1, size(refused)
+      call re%compile(trim(refused(i)), trim(refused_flags(i)), stat=stat, edition=CRE_EDITION_ES2020, &
+        unicode_version=CRE_UNICODE_LATEST)
+      call check(stat == CRE_INVALID_PATTERN, trim(refused(i)) // " refused by 2020")
+      call check(.not. is_valid(trim(refused(i)), trim(refused_flags(i)), edition=CRE_EDITION_ES2020, &
+        unicode_version=CRE_UNICODE_LATEST), trim(refused(i)) // " not valid in 2020")
+      call re%compile(trim(refused(i)), trim(refused_flags(i)), stat=stat, unicode_version=CRE_UNICODE_LATEST)
+      call check(stat == CRE_OK, trim(refused(i)) // " today")
+    end do
+    do i = 1, size(accepted)
+      call re%compile(trim(accepted(i)), trim(accepted_flags(i)), stat=stat, edition=CRE_EDITION_ES2020, &
+        unicode_version=CRE_UNICODE_13)
+      call check(stat == CRE_OK .and. re%edition() == CRE_EDITION_ES2020 .and. re%unicode_version() == 13, &
+        trim(accepted(i)) // " accepted by 2020")
+    end do
+    do i = 1, size(two_flags)
+      call re%compile("a", trim(two_flags(i)), stat=stat, edition=CRE_EDITION_ES2020)
+      call check(stat == CRE_INVALID_FLAGS, trim(two_flags(i)) // " refused by 2020")
+      call check(.not. is_valid("a", trim(two_flags(i)), edition=CRE_EDITION_ES2020), &
+        trim(two_flags(i)) // " not valid")
+      call re%compile("a", trim(two_flags(i)), stat=stat)
+      call check(stat == CRE_OK, trim(two_flags(i)) // " today")
+    end do
+
+    ! The settings and a timeout go together; compile with stat and a timeout checks a pattern without a default.
+    call re%compile("^(?:(a+)\1*)+$", "u", timeout=0.03_real64, edition=CRE_EDITION_ES2020, &
+      unicode_version=CRE_UNICODE_13)
+    call check(abs(re%match_timeout() - 0.03_real64) < 1e-9_real64, "the settings with a timeout")
+    call check(.not. re%test(repeat("a", 60) // "b", stat=stat) .and. stat == CRE_MATCH_LIMIT, "the settings' timeout")
+    call re%compile("(?i:a)", stat=stat, timeout=0.03_real64, edition=CRE_EDITION_ES2020)
+    call check(stat == CRE_INVALID_PATTERN .and. .not. re%is_compiled(), "a check with a timeout")
+    call set_default_match_timeout(0.03_real64)
+    call re%compile("a", edition=CRE_EDITION_ES2020, unicode_version=CRE_UNICODE_18)
+    call set_default_match_timeout(0.0_real64)
+    call check(abs(re%match_timeout() - 0.03_real64) < 1e-9_real64, "the settings take the default timeout")
+  end subroutine editions
 
   ! The README's example.
   subroutine readme()
@@ -352,7 +489,8 @@ contains
     type(captures_t) :: caps
     type(match_t) :: m
     type(piece_t), allocatable :: pieces(:)
-    type(regex_t) :: separator
+    type(regex_t) :: separator, schema
+    integer :: stat
     character(*), parameter :: text = "due 2026-10"
     call date%compile("(?<year>\d{4})-(?<month>\d{2})", "g")
     call check(date%test(text), "readme test")
@@ -364,6 +502,9 @@ contains
     call separator%compile("\s*(;)\s*")
     call separator%split("a ; b;c", pieces)
     call check(size(pieces) == 5 .and. pieces(3)%value == "b", "readme split")
+    call schema%compile("^\p{L}+$", "u", stat=stat, timeout=1.0_real64, edition=CRE_EDITION_ES2020, &
+                        unicode_version=CRE_UNICODE_13)
+    call check(stat == CRE_OK .and. schema%test("caf" // char(195) // char(169)), "readme schema")
   end subroutine readme
 
   ! With v, a class may hold a class, and the core reads each level of nesting by recursion: a pattern nested as deep

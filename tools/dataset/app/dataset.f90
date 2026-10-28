@@ -3,6 +3,7 @@
 ! it:
 !
 !   fpm run --profile release -- <data directory> <wrong-cases file> [--files <name>] [--compliance <file>]
+!                                [--edition current|es2020] [--unicode 13|17|18|latest]
 !                                                                                     (from tools/dataset)
 !
 ! Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the unicode
@@ -19,6 +20,10 @@
 ! record's flags from its lastIndex, right when the positions of the match and of every group, the named groups and,
 ! with g or y, the lastIndex after are V8's; one answer over UTF-16 and, when the text holds no lone surrogate and
 ! lastIndex is not between the halves of a pair, one over UTF-8 with positions in bytes.
+!
+! --edition and --unicode compile every pattern with that edition and version of Unicode, for the data as its own
+! scripts write it for them (edition.js apply and unicode.js apply in the data repository). Under es2020 a refusal of
+! the d or v flag is a refusal of the pattern, as the data's overlay counts it.
 !
 ! With --compliance <file>, the engine's compliance object is written to the file, as the benchmark page reads it
 ! (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it makes in
@@ -47,10 +52,20 @@ program dataset
   integer(int64) :: records = 0, skipped = 0
   type(line_t), allocatable :: wrongs(:)
   integer :: nwrong = 0
+  ! The edition and the version of Unicode every pattern is compiled with (--edition, --unicode).
+  integer :: the_edition = CRE_EDITION_CURRENT, the_unicode = CRE_UNICODE_DEFAULT
 
   call main()
 
 contains
+
+  ! Whether a failure to compile is a refusal of the pattern, not an error: an invalid pattern, one too large, or under
+  ! es2020 the d or v flag.
+  logical function refusal(stat)
+    integer, intent(in) :: stat
+    refusal = stat == CRE_INVALID_PATTERN .or. stat == CRE_PATTERN_TOO_LARGE .or. &
+              (stat == CRE_INVALID_FLAGS .and. the_edition == CRE_EDITION_ES2020)
+  end function refusal
 
   subroutine main()
     character(:), allocatable :: data, out, only, name, compliance
@@ -62,7 +77,7 @@ contains
     nargs = command_argument_count()
     if (nargs < 2) then
       write (error_unit, "(a)") "usage: dataset <data directory> <wrong-cases file> [--files <name>] " // &
-                                "[--compliance <file>]"
+                                "[--compliance <file>] [--edition current|es2020] [--unicode 13|17|18|latest]"
       error stop 2
     end if
     call get_command_argument(1, arg)
@@ -76,6 +91,22 @@ contains
       call get_command_argument(i + 1, arg)
       if (flag == "--files") only = trim(arg)
       if (flag == "--compliance") compliance = trim(arg)
+      if (flag == "--edition") then
+        select case (trim(arg))
+        case ("current"); the_edition = CRE_EDITION_CURRENT
+        case ("es2020"); the_edition = CRE_EDITION_ES2020
+        case default; error stop "--edition must be current or es2020"
+        end select
+      end if
+      if (flag == "--unicode") then
+        select case (trim(arg))
+        case ("13"); the_unicode = CRE_UNICODE_13
+        case ("17"); the_unicode = CRE_UNICODE_17
+        case ("18"); the_unicode = CRE_UNICODE_18
+        case ("latest"); the_unicode = CRE_UNICODE_LATEST
+        case default; error stop "--unicode must be 13, 17, 18 or latest"
+        end select
+      end if
     end do
     allocate (wrongs(1024))
     files = list_files(data)
@@ -448,9 +479,10 @@ contains
       mode_flags = flags // trim(suffixes(m))
       valid = flag_of(r, "valid." // trim(answers(m)))
       head = name // achar(9) // "/" // shown(pattern) // "/" // mode_flags
-      call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message)
+      call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message, edition=the_edition, &
+                      unicode_version=the_unicode)
       if (stat /= CRE_OK) then
-        if (stat /= CRE_INVALID_PATTERN .and. stat /= CRE_PATTERN_TOO_LARGE) errors = errors + 1
+        if (.not. refusal(stat)) errors = errors + 1
         if (valid) then
           refused = refused + 1
           call note("REFUSED" // achar(9) // head // achar(9) // message)
@@ -497,9 +529,10 @@ contains
       mode_flags = flags // trim(suffixes(m))
       valid = flag_of(r, "valid." // trim(answers(m)))
       head = name // achar(9) // "/" // shown(pattern) // "/" // mode_flags
-      call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message)
+      call re%compile(lossy(pattern), mode_flags, stat=stat, errmsg=message, edition=the_edition, &
+                      unicode_version=the_unicode)
       if (stat /= CRE_OK) then
-        if (stat /= CRE_INVALID_PATTERN .and. stat /= CRE_PATTERN_TOO_LARGE) errors = errors + 1
+        if (.not. refusal(stat)) errors = errors + 1
         if (valid) then
           refused = refused + 1
           call note("REFUSED" // achar(9) // head // achar(9) // message)
@@ -801,9 +834,9 @@ contains
       if (.not. flag_of(r, "valid." // trim(modes(m)))) cycle
       mode_flags = flags // merge("u", " ", m == 1)
       mode_flags = trim(mode_flags)
-      call re%compile(lossy(pattern), mode_flags, stat=s1)
-      call g%compile(lossy(pattern), mode_flags // "g", stat=s2)
-      call y%compile(lossy(pattern), mode_flags // "y", stat=s3)
+      call re%compile(lossy(pattern), mode_flags, stat=s1, edition=the_edition, unicode_version=the_unicode)
+      call g%compile(lossy(pattern), mode_flags // "g", stat=s2, edition=the_edition, unicode_version=the_unicode)
+      call y%compile(lossy(pattern), mode_flags // "y", stat=s3, edition=the_edition, unicode_version=the_unicode)
       ok = s1 == CRE_OK .and. s2 == CRE_OK .and. s3 == CRE_OK
       head = "/" // head_pattern // "/" // mode_flags
       do i = 1, size_of(tests)
@@ -932,7 +965,7 @@ contains
     logical :: found, carries, matched
     integer :: i, stat
     flags = text_of(r, "flags", found)
-    call re%compile(lossy(pattern), flags, stat=stat, errmsg=message)
+    call re%compile(lossy(pattern), flags, stat=stat, errmsg=message, edition=the_edition, unicode_version=the_unicode)
     if (stat /= CRE_OK) then
       refused = refused + 1
       call note("REFUSED" // achar(9) // exec_file // achar(9) // "/" // shown(pattern) // "/" // flags // achar(9) // &

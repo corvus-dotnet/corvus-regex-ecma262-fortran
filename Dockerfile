@@ -9,7 +9,7 @@
 # at depth 1 inside the container unless its data/ directory is mounted at /data. JOB=short, SECONDS_EACH, PASSES,
 # CORES, SETTLE and RUN_URL pass through (see tools/bench/run.sh). The central benchmark site runs this image each
 # night; .github/workflows/harness-image.yml builds, smoke-runs and publishes it.
-FROM node:24.22.0-bookworm-slim@sha256:91acba91b842bec0bf7ea6f5e09c644c7ccad72c4996ed9616d861d1c7cd60d4 AS node
+FROM node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 
 FROM gcc:14@sha256:db19db55a3bd1f836212a76854c4f6c7c4ccb0c9a9426dbf542e3505bc8cdfec
 RUN apt-get update && apt-get install -y --no-install-recommends python3 git util-linux ca-certificates curl \
@@ -19,8 +19,8 @@ RUN curl -fsSL -o /usr/local/bin/fpm https://github.com/fortran-lang/fpm/release
     && echo "2e50a8649ac4136b9cf6b63c5d1b01adf26c02eedc18f32e16261c0ce655d46d  /usr/local/bin/fpm" | sha256sum -c - \
     && chmod +x /usr/local/bin/fpm
 # The C library: the release's archive for x86_64 Linux, checked against its hash.
-ARG CRE_VERSION=0.2.1
-ARG CRE_SHA256=3b292ba2dac7828b84a0102bdf8463b5c04093f7849efab2b606e5756c39ac49
+ARG CRE_VERSION=0.2.3
+ARG CRE_SHA256=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
 RUN curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
     && echo "${CRE_SHA256}  /tmp/cre.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/cre && tar -xzf /tmp/cre.tar.gz -C /tmp/cre --strip-components 1 \
