@@ -20,7 +20,7 @@ library, as an fpm package and a CMake package, for gfortran 11 and later and In
 about its patterns and texts, test262's patterns and `exec` calls, the global search, `replace` and `split` among them,
 and texts of bytes that are not UTF-8, which it refuses), through this binding over UTF-16 and UTF-8, it gives every
 answer right and none wrong, refuses no valid pattern, accepts no invalid one and reaches no limit. CI runs
-the whole data.
+the whole data, and the data as its own scripts write it for Unicode 13 and 18 and for the grammar of ECMAScript 2020.
 
 ## Install
 
@@ -32,7 +32,7 @@ or `--link-flag "-L<lib>"`) and, for the shared library, the loader's (`LD_LIBRA
 
 ```toml
 [dependencies]
-corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.1" }
+corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.3" }
 ```
 
 With CMake, give the C library's directory in `CMAKE_PREFIX_PATH`, then add this directory (or install it and
@@ -75,9 +75,9 @@ end program basic
 
 | | |
 |---|---|
-| `call re%compile(pattern, flags, stat, errmsg, timeout)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none); without it the pattern takes the default. |
+| `call re%compile(pattern, flags, stat, errmsg, timeout, edition, unicode_version)` | Compiles a pattern as `new RegExp(pattern, flags)` does. `timeout` is the match timeout in seconds (0 for none); without it the pattern takes the default. `edition` and `unicode_version` are below. |
 | `call set_default_match_timeout(seconds)`, `default_match_timeout()` | The timeout of every pattern compiled without one: 0 (none) unless set. |
-| `is_valid(pattern, flags)` | Whether a pattern is valid, without compiling it. |
+| `is_valid(pattern, flags, stat, errmsg, edition, unicode_version)` | Whether a pattern is valid, without compiling it. |
 | `utf8_text(text, stat, errmsg)` | The text as a `utf8_text_t`, checked to be UTF-8 here, once, for the procedures below to search unchecked. |
 | `re%test(text, start, timeout)` | `RegExp.prototype.test`, with `lastIndex` at `start - 1` (at `start` alone with `y`). |
 | `re%find(text, match, start, timeout)` | The first match at or after `start`, as `exec` finds it: whether there is one, and `match`. |
@@ -88,7 +88,8 @@ end program basic
 | `re%replace(text, replacement)` | `String.prototype.replace`: the first match, or every match with `g`. |
 | `re%replace_all(text, replacement)` | `String.prototype.replaceAll`: every match. |
 | `call re%split(text, pieces, limit)` | `String.prototype.split`: an array of `piece_t` (`piece16_t` over UTF-16). |
-| `re%source()`, `re%flags()`, `re%match_timeout()`, `re%group_count()`, `re%group_name_count()`, `re%group_name(i)` | What the pattern is. |
+| `re%source()`, `re%flags()`, `re%match_timeout()`, `re%edition()`, `re%unicode_version()`, `re%group_count()`, `re%group_name_count()`, `re%group_name(i)` | What the pattern is. |
+| `unicode_versions`, `default_unicode_version`, `latest_unicode_version` | The versions of Unicode the C library carries, `[13, 17, 18]`, the default (17) and the latest (18). |
 | `caps%group(g)`, `caps%named(name)`, `caps%count()` | The groups of the last match of `exec`. |
 | `library_version()`, `binding_version` | The C library's and this binding's versions. |
 
@@ -112,10 +113,32 @@ When `stat` is absent, a failure stops the program with its message.
 or for every pattern compiled after it `call set_default_match_timeout(1.0_real64)`. Every procedure that matches gives
 each of its matches the timeout, and a match that reaches it reports `CRE_MATCH_LIMIT`; `test`, `find` and `exec` take
 a `timeout` of their own in its place. Without a timeout (the default) a match has no limit of time or of memory, so a
-program that matches a pattern or a text it did not write should set one.
+program that matches a pattern or a text it did not write should set one. With `stat`, `compile` reports a pattern that
+is not valid instead of stopping, and it takes a `timeout` of its own, so a validator needs no default timeout.
+
+**The edition and the version of Unicode.** Two settings, each independent of the other, are settled when a pattern is
+compiled and cost a match nothing:
+
+- `edition=CRE_EDITION_ES2020` reads the pattern with the grammar of ECMAScript 2020, which JSON Schema 2020-12 names.
+  It refuses what later editions added, and nothing else: the `d` and `v` flags (`CRE_INVALID_FLAGS`), modifier groups
+  such as `(?i:...)`, a group name used by two groups, and a property name or value that is not in that edition's
+  tables, such as `\p{Script=Yezidi}` (each `CRE_INVALID_PATTERN`). A pattern it accepts has the same answers as in
+  today's grammar. `CRE_EDITION_CURRENT`, the default, is today's grammar.
+- `unicode_version` is the version of Unicode whose tables the pattern is read with: the members of each `\p{...}`,
+  the characters of a group name, and case folding. It is `CRE_UNICODE_DEFAULT` (the default: the version of the V8
+  the answers are held to, 17 today), `CRE_UNICODE_13`, `CRE_UNICODE_17`, `CRE_UNICODE_18` or `CRE_UNICODE_LATEST` (18
+  today). `re%unicode_version()` gives the version it resolved to.
+
+Another value of either is `CRE_INVALID_ARGUMENT`.
+
+```fortran
+call schema%compile("^\p{L}+$", "u", stat=stat, timeout=1.0_real64, edition=CRE_EDITION_ES2020, &
+                    unicode_version=CRE_UNICODE_13)
+```
 
 **Handles.** A `regex_t` and a `captures_t` free what they hold when they are finalized. A `regex_t` is immutable once
-compiled and may be used from any number of threads; assigning one to another compiles the same pattern again. A
+compiled and may be used from any number of threads; assigning one to another compiles the same pattern again, with
+the same timeout, edition and version of Unicode. A
 `captures_t` is used by one thread at a time, and may not be copied.
 
 ## Benchmarks
