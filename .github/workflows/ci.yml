@@ -1,8 +1,8 @@
 # The binding, built and tested with fpm against the C library's release archive (as a user's build finds it), with
-# gfortran (the oldest version supported, 11, and a recent one) on Linux and macOS, and with Intel ifx on Linux and
-# Windows; built, tested and installed with CMake, and used by a consumer of the installed package; and the ECMA-262
-# test data through the binding on Linux. The data is pinned to a commit; the pass is 0 wrong answers, 0 refusals of a
-# valid pattern, 0 acceptances of an invalid one and 0 matches at their limit, over UTF-8 and UTF-16.
+# gfortran (the oldest version supported, 11, and a recent one) on Linux (x86-64 and arm64) and macOS, and with Intel
+# ifx on Linux and Windows; built, tested and installed with CMake, and used by a consumer of the installed package; and
+# the ECMA-262 test data through the binding on Linux. The data is pinned to a commit; the pass is 0 wrong answers, 0
+# refusals of a valid pattern, 0 acceptances of an invalid one and 0 matches at their limit, over UTF-8 and UTF-16.
 name: ci
 on:
   push:
@@ -41,6 +41,10 @@ jobs:
           compiler: gcc
           version: '14'
           flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
+        - os: ubuntu-24.04-arm
+          compiler: gcc
+          version: '14'
+          flags: -Wall -Wextra -std=f2018 -fimplicit-none -Werror -g -fcheck=all
         - os: macos-latest
           compiler: gcc
           version: '14'
@@ -69,10 +73,25 @@ jobs:
         compiler: ${{ matrix.compiler }}
         version: ${{ matrix.version }}
     - name: fpm
+      if: runner.arch != 'ARM64'
       uses: fortran-lang/setup-fpm@a03b5f81f16417c937a31b745eeb866c5a26a7a0 # v10
       with:
         github-token: ${{ github.token }}
         fpm-version: v0.13.0
+    - name: fpm (Linux on arm64)
+      # fpm publishes no arm64 Linux binary, so it is built from the release's single source file, as fpm's own
+      # bootstrap builds it, checked against its SHA-256.
+      if: runner.arch == 'ARM64'
+      env:
+        FC: ${{ steps.fortran.outputs.fc }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/fpm"
+        cd "$RUNNER_TEMP/fpm"
+        curl -sSfL --retry 5 -o fpm.F90 https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0.F90
+        echo "001cff6cf1145f215baa0888ba27acc06cea30a89b79d1a8be97db3fffbc8cd2  fpm.F90" | sha256sum -c -
+        "$FC" -O1 -o fpm fpm.F90
+        echo "$RUNNER_TEMP/fpm" >> "$GITHUB_PATH"
+        ./fpm --version
     - name: The C library
       # The release archive for the platform, unpacked under $RUNNER_TEMP, and made findable as a user of the binding
       # makes it: the linker's path, the loader's path and CMake.
@@ -81,7 +100,9 @@ jobs:
         FC: ${{ steps.fortran.outputs.fc }}
       run: |
         case "$RUNNER_OS" in
-          Linux) target=x86_64-unknown-linux-gnu; asset="corvus-regex-ecma262-$CRE_VERSION-$target.tar.gz" ;;
+          Linux)
+            if [ "$RUNNER_ARCH" = ARM64 ]; then target=aarch64-unknown-linux-gnu; else target=x86_64-unknown-linux-gnu; fi
+            asset="corvus-regex-ecma262-$CRE_VERSION-$target.tar.gz" ;;
           macOS) target=aarch64-apple-darwin; asset="corvus-regex-ecma262-$CRE_VERSION-$target.tar.gz" ;;
           Windows) target=x86_64-pc-windows-msvc; asset="corvus-regex-ecma262-$CRE_VERSION-$target.zip" ;;
         esac
