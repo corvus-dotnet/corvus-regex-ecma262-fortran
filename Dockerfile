@@ -15,14 +15,25 @@ FROM gcc:14@sha256:db19db55a3bd1f836212a76854c4f6c7c4ccb0c9a9426dbf542e3505bc8cd
 RUN apt-get update && apt-get install -y --no-install-recommends python3 git util-linux ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
-RUN curl -fsSL -o /usr/local/bin/fpm https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0-linux-x86_64-gcc-12 \
-    && echo "2e50a8649ac4136b9cf6b63c5d1b01adf26c02eedc18f32e16261c0ce655d46d  /usr/local/bin/fpm" | sha256sum -c - \
+# fpm: the release's binary on x86_64; on arm64, for which fpm publishes none, built from the release's single source
+# file as fpm's own bootstrap builds it. Each is checked against its SHA-256.
+RUN case "$(uname -m)" in \
+      x86_64) curl -fsSL -o /usr/local/bin/fpm https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0-linux-x86_64-gcc-12 \
+        && echo "2e50a8649ac4136b9cf6b63c5d1b01adf26c02eedc18f32e16261c0ce655d46d  /usr/local/bin/fpm" | sha256sum -c - ;; \
+      aarch64) curl -fsSL -o /tmp/fpm.F90 https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0.F90 \
+        && echo "001cff6cf1145f215baa0888ba27acc06cea30a89b79d1a8be97db3fffbc8cd2  /tmp/fpm.F90" | sha256sum -c - \
+        && gfortran -O1 -o /usr/local/bin/fpm /tmp/fpm.F90 && rm /tmp/fpm.F90 ;; \
+      *) echo "no fpm is pinned for $(uname -m)"; exit 1 ;; \
+    esac \
     && chmod +x /usr/local/bin/fpm
-# The C library: the release's archive for x86_64 Linux, checked against its hash.
+# The C library: the release's archive for the architecture being built, checked against its hash.
 ARG CRE_VERSION=0.2.3
-ARG CRE_SHA256=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
-RUN curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-    && echo "${CRE_SHA256}  /tmp/cre.tar.gz" | sha256sum -c - \
+ARG CRE_SHA256_X86_64=db46cccb38fde30e6c42e170ce414589bed1211b8bd0b14700468c072e155c58
+ARG CRE_SHA256_AARCH64=34bc6162d468fa70a449f84a5376ba285d246b2a31f3c07247e31a845290c36b
+RUN case "$(uname -m)" in x86_64) arch=x86_64 sum=$CRE_SHA256_X86_64 ;; aarch64) arch=aarch64 sum=$CRE_SHA256_AARCH64 ;; \
+        *) echo "no archive of the C library is pinned for $(uname -m)"; exit 1 ;; esac \
+    && curl -sSfL -o /tmp/cre.tar.gz "https://github.com/corvus-dotnet/corvus-regex-ecma262-rs/releases/download/v${CRE_VERSION}/corvus-regex-ecma262-${CRE_VERSION}-$arch-unknown-linux-gnu.tar.gz" \
+    && echo "$sum  /tmp/cre.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/cre && tar -xzf /tmp/cre.tar.gz -C /tmp/cre --strip-components 1 \
     && cp -r /tmp/cre/include/. /usr/local/include/ && cp -r /tmp/cre/lib/. /usr/local/lib/ && ldconfig \
     && rm -rf /tmp/cre /tmp/cre.tar.gz
