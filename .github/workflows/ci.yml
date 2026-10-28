@@ -73,10 +73,25 @@ jobs:
         compiler: ${{ matrix.compiler }}
         version: ${{ matrix.version }}
     - name: fpm
+      if: runner.arch != 'ARM64'
       uses: fortran-lang/setup-fpm@a03b5f81f16417c937a31b745eeb866c5a26a7a0 # v10
       with:
         github-token: ${{ github.token }}
         fpm-version: v0.13.0
+    - name: fpm (Linux on arm64)
+      # fpm publishes no arm64 Linux binary, so it is built from the release's single source file, as fpm's own
+      # bootstrap builds it, checked against its SHA-256.
+      if: runner.arch == 'ARM64'
+      env:
+        FC: ${{ steps.fortran.outputs.fc }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/fpm"
+        cd "$RUNNER_TEMP/fpm"
+        curl -sSfL --retry 5 -o fpm.F90 https://github.com/fortran-lang/fpm/releases/download/v0.13.0/fpm-0.13.0.F90
+        echo "001cff6cf1145f215baa0888ba27acc06cea30a89b79d1a8be97db3fffbc8cd2  fpm.F90" | sha256sum -c -
+        "$FC" -O1 -o fpm fpm.F90
+        echo "$RUNNER_TEMP/fpm" >> "$GITHUB_PATH"
+        ./fpm --version
     - name: The C library
       # The release archive for the platform, unpacked under $RUNNER_TEMP, and made findable as a user of the binding
       # makes it: the linker's path, the loader's path and CMake.
