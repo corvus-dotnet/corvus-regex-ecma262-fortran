@@ -86,7 +86,7 @@ contains
     call re%compile(repeat("(", 1001) // repeat(")", 1001), stat=stat)
     call check(stat == CRE_PATTERN_TOO_LARGE, "too large")
     call check(len(library_version()) >= 5, "library version")
-    call check(binding_version == "0.2.3", "binding version")
+    call check(binding_version == "0.2.5", "binding version")
   end subroutine compiling
 
   subroutine testing()

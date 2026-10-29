@@ -3,12 +3,12 @@
 #   find_package(corvus_regex_ecma262_fortran)  after installing, or add_subdirectory() on this directory
 #   target_link_libraries(app PRIVATE corvus_regex_ecma262::fortran)
 #
-# The C library comes from its own CMake package (a release archive of corvus-regex-ecma262-rs, 0.2.3 or later): give
+# The C library comes from its own CMake package (a release archive of corvus-regex-ecma262-rs, 0.2.5 or later): give
 # its directory in CMAKE_PREFIX_PATH or corvus_regex_ecma262_DIR.
 cmake_minimum_required(VERSION 3.16)
-project(corvus_regex_ecma262_fortran VERSION 0.2.3 LANGUAGES Fortran)
+project(corvus_regex_ecma262_fortran VERSION 0.2.5 LANGUAGES Fortran)
 
-find_package(corvus_regex_ecma262 0.2.3 REQUIRED)
+find_package(corvus_regex_ecma262 0.2.5 REQUIRED)
 
 add_library(corvus_regex_ecma262_fortran src/corvus_regex_ecma262.f90)
 add_library(corvus_regex_ecma262::fortran ALIAS corvus_regex_ecma262_fortran)

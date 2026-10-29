@@ -25,7 +25,7 @@ with the message (error stop).
 ### binding_version
 
 ```fortran
-character(*), parameter, public :: binding_version = "0.2.3"
+character(*), parameter, public :: binding_version = "0.2.5"
 ```
 
 The version of this binding.
@@ -645,7 +645,7 @@ function library_version() result(version)
 end function library_version
 ```
 
-The C library's version, such as "0.2.3".
+The C library's version, such as "0.2.5".
 
 ### last_error_offset
 

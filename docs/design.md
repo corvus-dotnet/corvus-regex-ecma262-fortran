@@ -61,7 +61,7 @@ The module's work is between Fortran and the C library:
 
 ## 4. The C library and the build
 
-The module is built against one release of the C library (0.2.3 or later): with fpm, its `lib` directory on the
+The module is built against one release of the C library (0.2.5 or later): with fpm, its `lib` directory on the
 linker's path; with CMake, its CMake package on `CMAKE_PREFIX_PATH`, and the target `corvus_regex_ecma262::fortran`.
 CI and the Dockerfile name the version and each archive's SHA-256. The API reference (`docs/api.md`) is generated from
 the module by `tools/docs/gen-api.ps1`, which CI checks is current.
