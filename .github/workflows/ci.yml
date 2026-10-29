@@ -280,12 +280,23 @@ jobs:
         name: wrong-cases
         path: wrong-cases*.tsv
 
+  docs:
+    name: The API reference is current
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - name: Check that docs/api.md is what the module makes
+      shell: pwsh
+      run: ./tools/docs/gen-api.ps1 -Check
+
   gate:
     # The one check of this workflow that the ruleset of main requires: it passes when every job above passed (or was
     # skipped), so a job added here is required with no change to the ruleset.
     name: CI gate
     if: always()
-    needs: [test, dataset]
+    needs: [test, dataset, docs]
     runs-on: ubuntu-latest
     steps:
     - name: Every job passed
