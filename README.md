@@ -32,7 +32,7 @@ or `--link-flag "-L<lib>"`) and, for the shared library, the loader's (`LD_LIBRA
 
 ```toml
 [dependencies]
-corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.3" }
+corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.5" }
 ```
 
 With CMake, give the C library's directory in `CMAKE_PREFIX_PATH`, then add this directory (or install it and

@@ -24,7 +24,7 @@ module corvus_regex_ecma262
   public :: set_default_match_timeout, default_match_timeout
 
   !> The version of this binding.
-  character(*), parameter, public :: binding_version = "0.2.3"
+  character(*), parameter, public :: binding_version = "0.2.5"
 
   ! The edition of ECMA-262 whose grammar a pattern is read with (the C library's CRE_EDITION_): today's, the default,
   ! or ECMAScript 2020's, which JSON Schema 2020-12 names. The 2020 grammar refuses what later editions added: the d
@@ -665,7 +665,7 @@ module corvus_regex_ecma262
 
 contains
 
-  !> The C library's version, such as "0.2.3".
+  !> The C library's version, such as "0.2.5".
   function library_version() result(version)
     character(:), allocatable :: version
     version = from_str(cre_version())

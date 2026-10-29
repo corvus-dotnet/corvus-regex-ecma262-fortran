@@ -1,6 +1,6 @@
 # The ECMA-262 test-data runner for this binding: `fpm run -- <data directory> <wrong-cases file>`, from here.
 name = "dataset"
-version = "0.2.3"
+version = "0.2.5"
 
 [build]
 link = ["corvus_regex_ecma262"]

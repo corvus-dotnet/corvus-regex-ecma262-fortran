@@ -1,7 +1,7 @@
 # The Fortran binding to the corvus-regex-ecma262 C library: the target corvus_regex_ecma262::fortran. The C library's
-# own package (corvus_regex_ecma262, 0.2.3 or later) must be findable too.
+# own package (corvus_regex_ecma262, 0.2.5 or later) must be findable too.
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
-find_dependency(corvus_regex_ecma262 0.2.3)
+find_dependency(corvus_regex_ecma262 0.2.5)
 include("${CMAKE_CURRENT_LIST_DIR}/corvus_regex_ecma262_fortran_targets.cmake")
 check_required_components(corvus_regex_ecma262_fortran)

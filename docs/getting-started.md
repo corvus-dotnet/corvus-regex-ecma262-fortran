@@ -29,7 +29,7 @@ its `lib` directory on the linker's path (and, for the shared library, the loade
 
 ```
 [dependencies]
-corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.3" }
+corvus-regex-ecma262 = { git = "https://github.com/corvus-dotnet/corvus-regex-ecma262-fortran", tag = "v0.2.5" }
 ```
 
 or, with CMake, give the C library's directory in `CMAKE_PREFIX_PATH`, add this repository (or install it and
